@@ -14,10 +14,12 @@ from envs import make_env
 from tdmpc2 import TDMPC2
 
 torch.backends.cudnn.benchmark = True
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
 
 cs = ConfigStore.instance()
 cs.store(name="config", node=Config)
+
+CHECKPOINT_PATH = "<path>/<to>/<checkpoints>"
 
 
 def to_td(cfg, env, obs, action=None, reward=None, value=None, terminated=None, frame=None):
@@ -64,7 +66,13 @@ def estimate_value(agent, obs, action, task):
 def generate_demos(cfg):
 	"""Generates demonstrations."""
 	assert torch.cuda.is_available()
-	cfg.checkpoint = f'<path>/<to>/<checkpoints>/{cfg.task}.pt'
+	assert hasattr(cfg, 'num_demos') and isinstance(cfg.num_demos, int) and cfg.num_demos > 0, \
+		'Please specificy number of demos to generate via +num_demos=<int> (must be a positive integer).'
+	assert os.path.exists(CHECKPOINT_PATH), \
+		f'Checkpoint path {CHECKPOINT_PATH} does not exist.'
+	cfg.enable_wandb = False
+	cfg.env_mode = 'sync'
+	cfg.checkpoint = f'{CHECKPOINT_PATH}/{cfg.task}.pt'
 	cfg.num_envs = 2*cfg.num_demos  # Some episodes may be rejected
 	cfg.model_size = 'B'
 	cfg.save_video = True
