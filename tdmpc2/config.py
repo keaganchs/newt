@@ -19,97 +19,88 @@ class Config:
 	"""
 
 	# environment
-	task: str = "soup"
-	obs: str = "state"
-	episodic: bool = False
-	num_envs: int = 10
-	env_mode: str = "async"
-	tasks_fp: str = "<path>/<to>/tasks.json"
+	task: str = "soup"										# "soup" for multitask, see tdmpc2/common/__init__.py for task list
+	obs: str = "state"										# observation type, one of ["state", "rgb"]
+	num_envs: int = 10										# number of parallel environments, overridden if task is "soup"
+	env_mode: str = "async"									# environment mode, one of ["async", "sync"]
+	tasks_fp: str = "<path>/<to>/tasks.json"				# path to task info and embeddings
 
 	# evaluation
-	checkpoint: Optional[str] = None
-	eval_episodes: int = 2
-	eval_freq: Optional[int] = None
+	checkpoint: Optional[str] = None						# path to model checkpoint for evaluation / finetuning
+	eval_episodes: int = 2									# number of evaluation episodes per parallel environment
 
 	# training
-	steps: int = 100_000_000
-	batch_size: int = 1024
-	utd: float = 0.075
-	reward_coef: float = 0.1
-	value_coef: float = 0.1
-	consistency_coef: float = 20.0
-	prior_coef: float = 10.0
-	rho: float = 0.5
-	lr: float = 3e-4
-	enc_lr_scale: float = 0.3
-	grad_clip_norm: float = 20.0
-	tau: float = 0.01
-	discount_denom: int = 5
-	discount_min: float = 0.95
-	discount_max: float = 0.995
-	buffer_size: int = 10_000_000
-	use_demos: bool = True
-	no_demo_buffer: bool = False
-	demo_steps: int = 200_000
-	lr_schedule: Optional[str] = None
-	warmup_steps: int = 5_000
-	seeding_coef: int = 5
-	exp_name: str = "default"
-	finetune: bool = False
+	steps: int = 100_000_000								# total environment steps to train for
+	batch_size: int = 1024									# effective batch size across all devices
+	utd: float = 0.075										# update-to-data ratio, i.e., model updates per environment step
+	reward_coef: float = 0.1								# coefficient for reward prediction loss
+	value_coef: float = 0.1									# coefficient for value prediction loss
+	consistency_coef: float = 20.0							# coefficient for latent consistency loss
+	prior_coef: float = 10.0								# coefficient for bc prior loss
+	rho: float = 0.5										# temporal weight coefficient for model losses
+	lr: float = 3e-4										# global learning rate
+	enc_lr_scale: float = 0.3								# encoder learning rate scale (wrt global lr)
+	grad_clip_norm: float = 20.0							# gradient clipping norm
+	tau: float = 0.01										# target value network update rate
+	discount_denom: int = 5									# denominator for discount factor heuristic
+	discount_min: float = 0.95								# minimum discount factor
+	discount_max: float = 0.995								# maximum discount factor
+	buffer_size: int = 10_000_000							# replay buffer capacity
+	use_demos: bool = True									# whether to use demonstration data
+	demo_steps: int = 200_000								# number of pretraining steps on demonstration data
+	lr_schedule: Optional[str] = "warmup"					# learning rate schedule, one of [None, "warmup"]
+	warmup_steps: int = 5_000								# number of warmup steps for lr schedule
+	seeding_coef: int = 5									# number of random rollouts (per env) to seed the buffer with
+	exp_name: str = "default"								# experiment name for logging
+	finetune: bool = False									# enable when finetuning a multitask pretrained model on a single task
 
 	# planning
-	mpc: bool = True
-	iterations: int = 6
-	num_samples: int = 512
-	num_elites: int = 64
-	num_pi_trajs: int = 24
-	horizon: int = 3
-	min_std: float = 0.05
-	max_std: float = 2.0
-	temperature: float = 0.5
-	constrained_planning: bool = True
-	constraint_start_step: int = 2_000_000
-	constraint_final_step: int = 10_000_000
+	mpc: bool = True										# whether to use planning for action selection
+	iterations: int = 6										# number of planning iterations
+	num_samples: int = 512									# number of action sequences sampled per iteration
+	num_elites: int = 64									# number of elite action sequences to refit distribution
+	num_pi_trajs: int = 24									# number of action sequences to sample from policy prior
+	horizon: int = 3										# planning horizon (also determines model training horizon)
+	min_std: float = 0.05									# minimum action sampling stddev
+	max_std: float = 2.0									# maximum action sampling stddev
+	temperature: float = 0.5								# softmax temperature for mppi weighting
+	constrained_planning: bool = True						# whether to constrain planning after pretraining
+	constraint_start_step: int = 2_000_000					# you probably want this to be seeding_coef * num_envs * episode_length
+	constraint_final_step: int = 10_000_000					# linearly anneal constraint weight until this step
 
 	# actor
-	log_std_min: float = -10
-	log_std_max: float = 2.0
-	entropy_coef: float = 1e-4
+	log_std_min: float = -10								# min log stddev for actor
+	log_std_max: float = 2.0								# max log stddev for actor
+	entropy_coef: float = 1e-4								# coefficient for actor entropy bonus
 
 	# critic
-	num_bins: int = 101
-	vmin: float = -10.0
-	vmax: float = +10.0
+	num_bins: int = 101										# number of bins for discrete regression
+	vmin: float = -10.0										# min (log) value for discrete regression
+	vmax: float = +10.0										# max (log) value for discrete regression
 
 	# architecture
-	model_size: Optional[str] = None
-	num_channels: int = 32
-	num_enc_layers: int = 3
-	enc_dim: int = 1024
-	mlp_dim: int = 1024
-	latent_dim: int = 512
-	task_dim: int = 512
-	num_q: int = 5
-	simnorm_dim: int = 8
+	model_size: Optional[str] = None						# model size, see tdmpc2/common/__init__.py for options
+	num_enc_layers: int = 3									# number of encoder layers, overridden by model_size
+	enc_dim: int = 1024										# encoder mlp width, overridden by model_size
+	mlp_dim: int = 1024										# model mlp width, overridden by model_size
+	latent_dim: int = 512									# model latent state dim, overridden by model_size
+	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
+	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
+	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
 
 	# logging
-	wandb_project: str = "<project>"
-	wandb_entity: str = "<user>"
-	enable_wandb: bool = True
+	wandb_project: str = "<project>"						# wandb project name
+	wandb_entity: str = "<user>"							# wandb entity (user) name
+	enable_wandb: bool = True								# whether to enable wandb logging
 
 	# misc
-	multiproc: bool = False
-	rank: int = 0
-	world_size: int = 1
-	port: Optional[str] = None
-	compile: bool = True
-	save_video: bool = False
-	render_size: int = 224
-	save_agent: bool = True
-	save_freq: Optional[int] = None
-	save_buffer: bool = False
-	data_dir: str = "<path>/<to>/data"
-	seed: int = 1
+	multiproc: bool = False									# whether to use multiple GPUs (will use all visible GPUs)
+	compile: bool = True									# whether to use torch.compile for model compilation (faster)
+	render_size: int = 224									# render size for rgb observations
+	save_video: bool = False								# whether to save evaluation videos
+	save_agent: bool = True									# whether to save agent checkpoints
+	data_dir: str = "<path>/<to>/data"						# directory for demonstrations
+	seed: int = 1											# random seed
 
 	# convenience (filled at runtime)
 	work_dir: Optional[str] = None
@@ -126,7 +117,12 @@ class Config:
 	action_dims: Any = None
 	episode_lengths: Any = None
 	discounts: Any = None
+	eval_freq: Optional[int] = None
+	save_freq: Optional[int] = None
 	bin_size: Optional[float] = None
+	rank: int = 0
+	world_size: int = 1
+	port: Optional[str] = None
 	child_env: bool = False
 
 	get = lambda self, val, default=None: getattr(self, val, default)
@@ -165,6 +161,10 @@ def parse_cfg(cfg):
 		cfg.task_dim = 0  # No task conditioning for single-task training
 	cfg.eval_freq = 20 * 500 * cfg.num_envs
 	cfg.save_freq = 5 * cfg.eval_freq
+
+	# Warmup LR when pretraining
+	if cfg.use_demos and cfg.checkpoint is None:
+		cfg.lr_schedule = "warmup"
 
 	# Load task info and embeddings
 	with open(cfg.tasks_fp, "r") as f:

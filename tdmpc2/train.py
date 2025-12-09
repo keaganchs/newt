@@ -198,10 +198,6 @@ def launch(cfg: Config):
 		'multiproc': cfg.multiproc,
 		'compile': cfg.compile,
 	}
-	if cfg.use_demos and cfg.no_demo_buffer:
-		buffer = Buffer(**buffer_args)
-		load_demos(cfg, [buffer])
-		print('Warning: using a single buffer for both demos and experience!')
 	if cfg.use_demos:
 		# Create demonstration buffer
 		demo_buffer_args = deepcopy(buffer_args)

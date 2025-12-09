@@ -95,9 +95,12 @@ $ python train.py    # <-- a 20M parameter agent trained on all 200 MMBench task
 $ python train.py model_size=XL    # <-- a 80M parameter agent
 $ python train.py model_size=B task=walker-walk   # <-- a 5M parameter single-task agent
 $ python train.py obs=rgb    # <-- a 20M parameter agent trained with state+RGB observations
+$ python train.py checkpoint=<path>/<to>/<checkpoint>.pt    # <-- resume training from checkpoint
 ```
 
-We recommend using default hyperparameters, including the default model size of 20M parameters (`model_size=L`). See `config.py` for a full list of arguments.
+We recommend using default hyperparameters, including the default model size of 20M parameters (`model_size=L`) for multitask experiments. For single-task experiments we recommend `model_size=B`. See `config.py` for a full list of arguments.
+
+If you would like to load one of our provided model checkpoints, you can download them from our [Hugging Face Models page](https://huggingface.co/nicklashansen/newt) and specify the path to the checkpoint using the `checkpoint` argument. Multitask checkpoints use a `soup` prefix in the filename, and model size is also specified in the filename (`S=2M`, `B=5M`, `L=20M`, `XL=80M`). You will need to use `model_size=B` when loading single-task checkpoints. We are actively working on better support for model loading and finetuning, so check back soon for updates!
 
 ----
 
