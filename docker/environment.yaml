@@ -24,6 +24,7 @@ dependencies:
     - omegaconf==2.3.0
     - git+https://github.com/nicklashansen/metaworld.git
     - mani_skill-nightly==2025.9.19.39
+    - moviepy==1.0.3
     - mujoco==3.3.6
     - numpy==1.24.4
     - robodesk==1.0.0

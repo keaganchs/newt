@@ -88,7 +88,7 @@ This option may not always be available due to Docker Hub rate limits, but can b
 
 ## Example usage
 
-Agents can trained by running the `train.py` script. Below are some example commands:
+Agents can be trained by running the `train.py` script. Below are some example commands:
 
 ```
 $ python train.py    # <-- a 20M parameter agent trained on all 200 MMBench tasks
