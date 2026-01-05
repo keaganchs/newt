@@ -81,8 +81,10 @@ class Config:
 	# architecture
 	model_size: Optional[str] = None						# model size, see tdmpc2/common/__init__.py for options
 	num_enc_layers: int = 3									# number of encoder layers, overridden by model_size
+	
 	enc_dim: int = 1024										# encoder mlp width, overridden by model_size
 	mlp_dim: int = 1024										# model mlp width, overridden by model_size
+	
 	latent_dim: int = 512									# model latent state dim, overridden by model_size
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
@@ -101,6 +103,37 @@ class Config:
 	save_agent: bool = True									# whether to save agent checkpoints
 	data_dir: str = "<path>/<to>/data"						# directory for demonstrations
 	seed: int = 1											# random seed
+
+	# TRM config
+	# batch_size: defined above
+	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
+	seq_len: int = 1024  									# if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
+    
+	task_emb_len: int = 512									# length of task identifier embeddings
+    # task_emb_ndim: defined as task_dim above
+	num_task_identifiers: int = 220							# 220 for MMBench 
+	vocab_size: int = 32768									# CLIP vocab size
+
+	H_cycles: int = 2
+	L_cycles: int = 6
+	L_layers: int = 2
+
+	# Transformer config
+	hidden_size: int = 1024
+	expansion: float = 4.0
+	num_heads: int = 4
+	pos_encodings: str = "rope"								# "rope" or "learned"
+
+	rms_norm_eps: float = 1e-5
+	rope_theta: float = 10000.0
+	
+	# Halting Q-learning config
+	halt_max_steps: int = 16 								# For Adaptive Computational Time (ACT). Note that during eval max steps is always used
+	halt_exploration_prob: float = 0.0						# For epsilon-greedy exploration
+
+	forward_dtype: str = "bfloat16"
+
+	mlp_t: bool = False # use mlp on L instead of transformer
 
 	# convenience (filled at runtime)
 	work_dir: Optional[str] = None

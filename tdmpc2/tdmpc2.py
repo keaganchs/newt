@@ -6,7 +6,8 @@ from tensordict import TensorDict
 
 from common import math
 from common.scale import RunningScale
-from common.layers import api_model_conversion
+from tdmpc2.common.trm.layers import api_model_conversion
+from tdmpc2.common.trm.trm import TRM
 
 
 class TDMPC2(torch.nn.Module):
@@ -364,7 +365,7 @@ class TDMPC2(torch.nn.Module):
 			for _, qs_unbind_unbind in enumerate(qs_unbind.unbind(0)):
 				value_loss = value_loss + math.soft_ce(qs_unbind_unbind, td_targets_unbind, self.cfg).mean() * self.rho[t]
 		value_loss = value_loss / self.cfg.num_q
-
+	
 		if not self.maxq_pi: # Behavior cloning
 			pi_action, pi_info = self.model.pi(_zs, task)
 			bc_loss = math.masked_bc_per_timestep(pi_action, action, task, self.model._action_masks)
