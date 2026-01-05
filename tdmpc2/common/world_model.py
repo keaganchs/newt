@@ -1,9 +1,11 @@
-from thesis.vla.newt.tdmpc2.common.trm.trm import layers
 import torch
 import torch.nn as nn
 
 from common import math, init
 from tensordict import TensorDict
+
+from tdmpc2.common import layers
+from tdmpc2.common.trm import TRM
 
 
 class WorldModel(nn.Module):
@@ -122,12 +124,6 @@ class WorldModel(nn.Module):
 		"""
 		Encodes an observation into its latent representation. Optionally use a Tiny Recursion Model (TRM)
 		"""
-		
-
-		# TODO: TRM implementation
-
-
-
 		if self.cfg.obs == 'state':
 			return self._encoder[self.cfg.obs](self.task_emb(obs, task))
 		assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"

@@ -6,8 +6,7 @@ from tensordict import TensorDict
 
 from common import math
 from common.scale import RunningScale
-from tdmpc2.common.trm.layers import api_model_conversion
-from tdmpc2.common.trm.trm import TRM
+from tdmpc2.common.layers import api_model_conversion
 
 
 class TDMPC2(torch.nn.Module):

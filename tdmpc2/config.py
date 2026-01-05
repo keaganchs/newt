@@ -51,7 +51,7 @@ class Config:
 	lr_schedule: Optional[str] = None						# learning rate schedule, one of [None, "warmup"]
 	warmup_steps: int = 5_000								# number of warmup steps for lr schedule
 	seeding_coef: int = 5									# number of random rollouts (per env) to seed the buffer with
-	exp_name: str = "default"								# experiment name for logging
+	exp_name: str = "newt_trm_0"							# experiment name for logging
 	finetune: bool = False									# enable when finetuning a multitask pretrained model on a single task
 
 	# planning
@@ -91,8 +91,8 @@ class Config:
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
 
 	# logging
-	wandb_project: str = "<project>"						# wandb project name
-	wandb_entity: str = "<user>"							# wandb entity (user) name
+	wandb_project: str = "newt_trm"							# wandb project name
+	wandb_entity: str = "keagan"							# wandb entity (user) name
 	enable_wandb: bool = True								# whether to enable wandb logging
 
 	# misc

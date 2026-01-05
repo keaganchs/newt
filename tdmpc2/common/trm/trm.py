@@ -12,9 +12,10 @@ from torch import nn
 
 from pydantic import BaseModel
 
-from tdmpc2.common.trm.layers import trunc_normal_init_, rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear, CastedSparseEmbedding
+from tdmpc2.common.trm import trunc_normal_init_, rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear, CastedSparseEmbedding
 
 IGNORE_LABEL_ID = -100
+
 
 @dataclass
 class TRMInnerCarry:
@@ -223,7 +224,7 @@ class TRMInner(nn.Module):
 
 
 class TRM(nn.Module):
-    """ACT wrapper."""
+    """Tiny Recursion Model (TRM) with Adaptive Computation Time (ACT)"""
 
     def __init__(self, config_dict: dict):
         super().__init__()
