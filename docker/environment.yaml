@@ -39,3 +39,15 @@ dependencies:
     - termcolor==3.1.0
     - tqdm==4.67.1
     - wandb==0.22.1
+    - adam-atan2
+    - einops
+    - coolname
+    - pydantic
+    - pydantic-core
+    - argdantic
+    - packaging 
+    - ninja 
+    - wheel 
+    - huggingface_hub 
+    - numba
+    - triton
