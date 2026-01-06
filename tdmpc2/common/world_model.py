@@ -121,13 +121,21 @@ class WorldModel(nn.Module):
 
 	def encode(self, obs, task):
 		"""
-		Encodes an observation into its latent representation. Optionally use a Tiny Recursion Model (TRM)
+		Encodes an observation into its latent representation. 
+		Keagan: added option to use a Tiny Recursion Model (TRM)
 		"""
-		if self.cfg.obs == 'state':
-			return self._encoder[self.cfg.obs](self.task_emb(obs, task))
-		assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"
-		z = torch.cat([self.task_emb(obs['state'], task), obs['rgb']], dim=-1)
-		return self._encoder['state'](z)
+		if self.cfg.use_trm_encoder:
+			# Match dims of task descriptions (embedding is handled in the TRM module)
+			while task.ndim < len(obs.shape[:-1]):
+				task = task.unsqueeze(-1)
+			init_carry=self._encoder['state'].initial_carry({"inputs": (math.torch.concat((obs, task)))})
+			return self._encoder['state'](init_carry, (obs, task))[1]
+		else:
+			if self.cfg.obs == 'state':
+				return self._encoder[self.cfg.obs](self.task_emb(obs, task))
+			assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"
+			z = torch.cat([self.task_emb(obs['state'], task), obs['rgb']], dim=-1)
+			return self._encoder['state'](z)
 
 		# z_rgb = self._encoder['rgb'](obs['rgb'])
 		# return torch.stack((z_state, z_rgb), dim=0).mean(0)

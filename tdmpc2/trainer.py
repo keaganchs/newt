@@ -180,8 +180,10 @@ class Trainer():
 		checkpoint = self.cfg.get('checkpoint', None)
 		if checkpoint:
 			if not os.path.exists(checkpoint):
-				raise FileNotFoundError(f'Checkpoint file not found: {checkpoint}')
-			self.agent.load(self.cfg.checkpoint)
+				checkpoint = os.path.join(self.cfg.work_dir, f'{checkpoint}.pt')
+				if not os.path.exists(checkpoint):
+					raise FileNotFoundError(f'Checkpoint file not found: {checkpoint}')
+			self.agent.load(checkpoint)
 			if self.cfg.rank == 0:
 				print(colored(f'Loaded checkpoint from {self.cfg.checkpoint}.', 'blue', attrs=['bold']))
 		else:

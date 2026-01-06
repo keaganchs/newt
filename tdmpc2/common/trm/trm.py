@@ -40,7 +40,7 @@ class TRMConfig(BaseModel):
     
     task_emb_len: int = 16 # if non-zero, length of task embedding
     task_dim: int = 0 # previously task_emb_ndim: int = 0 # Dim of task embedding space. Set to 0 to disable
-    num_task_identifiers: int # Number of unique tasks
+    # num_task_identifiers: int # Number of unique tasks
     vocab_size: int # Number of tokens in the model's vocabulary 
 
     H_cycles: int
@@ -136,10 +136,15 @@ class TRMInner(nn.Module):
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
 
-        self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size)  if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
+        # Take number of of embeddings
+        if self.config.task_embeddings is not None:
+            self.task_emb_len = len(self.config.task_embeddings) // self.config.hidden_size
+        else:
+            self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size)  if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
+        
         if self.config.task_dim > 0:
             # Zero init task embeddings
-            self.task_emb = CastedSparseEmbedding(self.config.num_task_identifiers, self.config.task_dim,
+            self.task_emb = CastedSparseEmbedding(self.config.num_tasks, self.config.task_dim,
                                                     batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype)
 
         # LM Blocks

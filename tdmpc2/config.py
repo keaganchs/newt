@@ -20,13 +20,13 @@ class Config:
 	"""
 
 	# environment
-	task: str = "metaworld"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
+	task: str = "mujoco"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
 	obs: str = "state"										# observation type, one of ["state", "rgb"]
-	num_envs: int = 49										# number of parallel environments, overridden if task is "soup"
+	num_envs: int = 6										# number of parallel environments, overridden if task is "soup"
 	env_mode: str = "async"									# environment mode, one of ["async", "sync"]
 
 	# evaluation
-	checkpoint: Optional[str] = "soup-5M-default"		# Checkpoint name (set path separately in generate_demos.py); for evaluation / finetuning / demonstrations
+	checkpoint: Optional[str] = None						# Checkpoint name (e.g. "soup-5M-default" set path separately in generate_demos.py); for evaluation / finetuning / demonstrations
 	eval_episodes: int = 2									# number of evaluation episodes per parallel environment
 
 	# training
@@ -82,7 +82,7 @@ class Config:
 	model_size: Optional[str] = None						# model size, see tdmpc2/common/__init__.py for options
 	num_enc_layers: int = 3									# number of encoder layers, overridden by model_size
 	
-	enc_dim: int = 1024										# encoder mlp width, overridden by model_size
+	enc_dim: int = 256										# encoder mlp width, overridden by model_size. Large effect on TRM total parameter size
 	mlp_dim: int = 1024										# model mlp width, overridden by model_size
 	
 	latent_dim: int = 512									# model latent state dim, overridden by model_size
@@ -109,17 +109,17 @@ class Config:
 	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
 	seq_len: int = 1024  									# if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
     
-	task_emb_len: int = 512									# length of task identifier embeddings
+	# task_emb_len: int = 512								# length of task identifier embeddings. Defined during runtime as task_embeddings
     # task_emb_ndim: defined as task_dim above
-	num_task_identifiers: int = 220							# 220 for MMBench 
-	vocab_size: int = 32768									# CLIP vocab size
+	# num_task_identifiers: int = 220						# Defined as num_tasks below 
+	vocab_size: int = 32768									# CLIP vocab size is 32,768
 
 	H_cycles: int = 2
 	L_cycles: int = 6
 	L_layers: int = 2
 
 	# Transformer config
-	hidden_size: int = 1024
+	hidden_size: int = 256									# Large effect on TRM total parameter size
 	expansion: float = 4.0
 	num_heads: int = 4
 	pos_encodings: str = "rope"								# "rope" or "learned"
