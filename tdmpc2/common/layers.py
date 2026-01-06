@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from tdmpc2.common.trm import TRM
+from common.trm import TRM
 
 
 class SimNorm(nn.Module):
@@ -165,7 +165,7 @@ def enc(cfg, out={}):
 	Returns a dictionary of encoders for each observation in the dict.
 	"""
 	if cfg.use_trm_encoder:
-		out['state'] = TRM(cfg.trm_config)
+		out['state'] = TRM(cfg)
 	else:
 		if cfg.obs == 'state':
 			out['state'] = mlp(cfg.obs_shape['state'][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
@@ -194,7 +194,7 @@ def api_model_conversion(target_state_dict, source_state_dict):
 			# possible rgb input in target but not in source, we should pad
 			print('Warning: unexpected shape mismatch in encoder weights, attempting to pad source weights...')
 			pad = target_state_dict[key].shape[1] - source_state_dict[key].shape[1]
-			assert pad > 0, 'pad should be positive'
+			assert pad > 0, f'pad f({pad}) should be positive'
 			pad_tensor = torch.zeros(source_state_dict[key].shape[0], pad, device=source_state_dict[key].device)
 			source_state_dict[key] = torch.cat([source_state_dict[key], pad_tensor], dim=1)
 

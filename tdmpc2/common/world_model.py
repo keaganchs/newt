@@ -4,8 +4,7 @@ import torch.nn as nn
 from common import math, init
 from tensordict import TensorDict
 
-from tdmpc2.common import layers
-from tdmpc2.common.trm import TRM
+from common import layers
 
 
 class WorldModel(nn.Module):

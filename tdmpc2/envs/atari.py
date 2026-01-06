@@ -3,7 +3,7 @@ warnings.filterwarnings('ignore')
 
 import gymnasium as gym
 import numpy as np
-import ale_py
+# import ale_py
 
 from envs.wrappers.timeout import Timeout
 

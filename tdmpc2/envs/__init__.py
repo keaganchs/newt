@@ -20,7 +20,7 @@ def make_env(cfg):
 	"""
 	Make an environment for Newt experiments.
 	"""
-	gym.logger.set_level(40)
+	gym.logger.min_level = 40
 	if not cfg.child_env:
 		env = make_vectorized_multitask_env(cfg, make_env)
 	else:

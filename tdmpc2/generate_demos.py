@@ -19,7 +19,10 @@ torch.set_float32_matmul_precision("high")
 cs = ConfigStore.instance()
 cs.store(name="config", node=Config)
 
-CHECKPOINT_PATH = "<path>/<to>/<checkpoints>"
+# Checkpoints are available from https://huggingface.co/nicklashansen/newt/tree/main
+# If downloaded with `uv tool install hf` -> `hf download nicklashansen/newt`, the default path is
+# ~/.cache/huggingface/hub/models--nicklashansen--newt/snapshots/<commit_hash>
+CHECKPOINT_PATH = "/home/keagan/.cache/huggingface/hub/models--nicklashansen--newt/snapshots/b42e318670f49eb040db6bc7f689a13ae72504d7"
 
 
 def to_td(cfg, env, obs, action=None, reward=None, value=None, terminated=None, frame=None):
@@ -72,15 +75,20 @@ def generate_demos(cfg):
 		f'Checkpoint path {CHECKPOINT_PATH} does not exist.'
 	cfg.enable_wandb = False
 	cfg.env_mode = 'sync'
-	cfg.checkpoint = f'{CHECKPOINT_PATH}/{cfg.task}.pt'
-	cfg.num_envs = 2*cfg.num_demos  # Some episodes may be rejected
+	# Allow for model selection independent of task
+	if cfg.checkpoint is None:
+		cfg.checkpoint = os.path.join(CHECKPOINT_PATH, f'{cfg.task}.pt')
+	else:
+		cfg.checkpoint = os.path.join(CHECKPOINT_PATH, f'{cfg.checkpoint}.pt')
+	# Comment out line which breaks the below assertion in config.py required for finetuning
+	# cfg.num_envs = 2*cfg.num_demos  # Some episodes may be rejected
 	cfg.model_size = 'B'
 	cfg.save_video = True
 	cfg.compile = False
 	cfg = parse_cfg(cfg)
 	set_seed(cfg.seed)
 	assert len(cfg.tasks) == cfg.num_envs, \
-		'Number of tasks must match number of environments for finetuning.'
+		f'Number of tasks ({len(cfg.tasks)}) must match number of environments ({cfg.num_envs}) for finetuning.'
 	
 	# Define environment
 	env = make_env(cfg)

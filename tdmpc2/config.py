@@ -20,13 +20,13 @@ class Config:
 	"""
 
 	# environment
-	task: str = "soup"										# "soup" for multitask, see tdmpc2/common/__init__.py for task list
+	task: str = "metaworld"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
 	obs: str = "state"										# observation type, one of ["state", "rgb"]
-	num_envs: int = 10										# number of parallel environments, overridden if task is "soup"
+	num_envs: int = 49										# number of parallel environments, overridden if task is "soup"
 	env_mode: str = "async"									# environment mode, one of ["async", "sync"]
 
 	# evaluation
-	checkpoint: Optional[str] = None						# path to model checkpoint for evaluation / finetuning
+	checkpoint: Optional[str] = "soup-5M-default"		# Checkpoint name (set path separately in generate_demos.py); for evaluation / finetuning / demonstrations
 	eval_episodes: int = 2									# number of evaluation episodes per parallel environment
 
 	# training
@@ -93,7 +93,7 @@ class Config:
 	# logging
 	wandb_project: str = "newt_trm"							# wandb project name
 	wandb_entity: str = "keagan"							# wandb entity (user) name
-	enable_wandb: bool = True								# whether to enable wandb logging
+	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
 	multiproc: bool = False									# whether to use multiple GPUs (will use all visible GPUs)

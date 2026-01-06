@@ -12,7 +12,8 @@ from torch import nn
 
 from pydantic import BaseModel
 
-from tdmpc2.common.trm import trunc_normal_init_, rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear, CastedSparseEmbedding
+from config import Config
+from common.trm.trm_layers import trunc_normal_init_, rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear, CastedSparseEmbedding
 
 IGNORE_LABEL_ID = -100
 
@@ -38,7 +39,7 @@ class TRMConfig(BaseModel):
     seq_len: int
     
     task_emb_len: int = 16 # if non-zero, length of task embedding
-    task_emb_ndim: int = 0 # Dim of task embedding space. Set to 0 to disable
+    task_dim: int = 0 # previously task_emb_ndim: int = 0 # Dim of task embedding space. Set to 0 to disable
     num_task_identifiers: int # Number of unique tasks
     vocab_size: int # Number of tokens in the model's vocabulary 
 
@@ -65,12 +66,15 @@ class TRMConfig(BaseModel):
 
 
 class TRMBlock(nn.Module):
-    def __init__(self, config: TRMConfig) -> None:
+    def __init__(self, config: Config) -> None:
         super().__init__()
+
+        # TODO: Parse TRM arguments from config
+        
 
         self.config = config
         if self.config.mlp_t:
-            self.task_emb_len = -(self.config.task_emb_ndim // -self.config.hidden_size) if self.config.task_emb_len == 0 else self.config.task_emb_len
+            self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_emb_len == 0 else self.config.task_emb_len
             self.mlp_t = SwiGLU(
                 hidden_size=self.config.seq_len + self.task_emb_len, # L
                 expansion=config.expansion,
@@ -119,7 +123,7 @@ class TRMReasoningModule(nn.Module):
 
 
 class TRMInner(nn.Module):
-    def __init__(self, config: TRMConfig) -> None:
+    def __init__(self, config: Config) -> None:
         super().__init__()
         self.config = config
         self.forward_dtype = getattr(torch, self.config.forward_dtype)
@@ -132,10 +136,10 @@ class TRMInner(nn.Module):
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
 
-        self.task_emb_len = -(self.config.task_emb_ndim // -self.config.hidden_size)  if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
-        if self.config.task_emb_ndim > 0:
+        self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size)  if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
+        if self.config.task_dim > 0:
             # Zero init task embeddings
-            self.task_emb = CastedSparseEmbedding(self.config.num_task_identifiers, self.config.task_emb_ndim,
+            self.task_emb = CastedSparseEmbedding(self.config.num_task_identifiers, self.config.task_dim,
                                                     batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype)
 
         # LM Blocks
@@ -166,7 +170,7 @@ class TRMInner(nn.Module):
         embedding = self.embed_tokens(input.to(torch.int32))
 
         # Task embeddings
-        if self.config.task_emb_ndim > 0:
+        if self.config.task_dim > 0:
             task_embedding = self.task_emb(task_identifiers)
             
             pad_count = self.task_emb_len * self.config.hidden_size - task_embedding.shape[-1]
@@ -226,9 +230,9 @@ class TRMInner(nn.Module):
 class TRM(nn.Module):
     """Tiny Recursion Model (TRM) with Adaptive Computation Time (ACT)"""
 
-    def __init__(self, config_dict: dict):
+    def __init__(self, config: Config):
         super().__init__()
-        self.config = TRMConfig(**config_dict)
+        self.config = config
         self.inner = TRMInner(self.config)
 
     @property
