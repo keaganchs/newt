@@ -39,7 +39,8 @@ dependencies:
     - termcolor==3.1.0
     - tqdm==4.67.1
     - wandb==0.22.1
-    - adam-atan2
+    - tensordict-0.10.0
+    - adam-atan2==0.0.3
     - einops==0.8.1
     - coolname==2.2.0
     - pydantic==2.12.5
