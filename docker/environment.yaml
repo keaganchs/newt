@@ -10,10 +10,8 @@ dependencies:
   - pip:
     - dm-control==1.0.34
     - glfw==2.10.0
-    - gymnasium==0.29.1
-    - gymnasium[atari,accept-rom-license]
+    # - gymnasium[atari,accept-rom-license,box2d]==0.29.1
     - swig==4.4.1
-    - gymnasium[box2d]
     - gpustat==1.1.1
     - ffmpeg==1.4
     - imageio==2.37.0
@@ -24,23 +22,19 @@ dependencies:
     - submitit==1.5.3
     - omegaconf==2.3.0
     - git+https://github.com/nicklashansen/metaworld.git
-    - mani_skill-nightly==2025.9.19.39
+    # - mani_skill-nightly==2025.9.19.39
     - moviepy==1.0.3
     - mujoco==3.4.0
-    - numpy==1.24.4
+    - numpy==2.2.6
     - robodesk==1.0.0
-    - ogbench==1.1.5
-    - swig==4.3.1
+    - ogbench==1.2.0
     - tensordict==0.10.0
-    - torch==2.8.0
-    - torchvision==0.23.0
-    - torchrl==0.10.0
+    - torch==2.9.1
+    - torchvision==0.24.1
     - transformers==4.57.3
     - kornia==0.8.1
-    - termcolor==3.1.0
     - tqdm==4.67.1
     - wandb==0.22.1
-    - tensordict-0.10.0
     - adam-atan2==0.0.3
     - einops==0.8.1
     - coolname==2.2.0
@@ -51,15 +45,12 @@ dependencies:
     - huggingface_hub==0.36.0
     - numba==0.63.1
     - triton==3.5.1
-    - torchvision==0.24.1
     - pillow==12.1.0
     - termcolor==3.3.0
     - torchrl==0.10.1
     - safetensors==0.7.0
     - tokenizers==0.22.2
     - regex==2025.11.3
-    - gymnasium==0.29.1
-    - dm-control==1.0.34
     - dm-env==1.6
     - scipy==1.15.3
     - absl-py==2.3.1
@@ -67,6 +58,3 @@ dependencies:
     - lxml==6.0.2
     - mani-skill==3.0.0b22
     - opencv-python==4.12.0.88
-    - robodesk==1.0.0
-    - ogbench==1.2.0
-    - ale-py==0.11.2

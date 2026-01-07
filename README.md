@@ -54,8 +54,12 @@ Most dependencies can be installed via `conda`. We provide an `environment.yml` 
 ```
 conda env create -f docker/environment.yaml
 conda activate newt
-pip install --no-cache-dir 'ale_py==0.10'
+conda install conda-forge::swig
+pip install --no-cache-dir 'gymnasium[atari,accept-rom-license,box2d]==0.29.1'
 ```
+
+NOTE: Atari environments are currently disabled due to versioning issues. These tasks can be run by installing `gymnasium<=0.27.1` and `ale_py==0.11.2`, then disabling the maniskill tasks.
+
 
 Finally, we recommend setting the `MS_SKIP_ASSET_DOWNLOAD_PROMPT` environment variable to `1` to avoid prompts from ManiSkill about downloading assets during runtime (assuming you have already downloaded the assets as described above):
 

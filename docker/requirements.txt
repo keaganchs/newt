@@ -90,7 +90,7 @@ ogbench==1.2.0
 omegaconf==2.3.0
 opencv-python==4.12.0.88
 orjson==3.11.5
-packaging @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1745345660/work
+packaging==25.0
 parso==0.8.5
 pexpect==4.9.0
 pillow==12.1.0
