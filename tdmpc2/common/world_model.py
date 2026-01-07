@@ -126,16 +126,37 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.use_trm_encoder:
 			# Match dims of task descriptions (embedding is handled in the TRM module)
-			while task.ndim < len(obs.shape[:-1]):
-				task = task.unsqueeze(-1)
-			init_carry=self._encoder['state'].initial_carry({"inputs": (math.torch.concat((obs, task)))})
-			return self._encoder['state'](init_carry, (obs, task))[1]
+			# while task.ndim < len(obs.shape[:-1]):
+			# 	if isinstance(task, int):
+			# 		task = torch.tensor([task], device=obs.device)
+			# 	task = task.unsqueeze(-1)
+
+			# Use task_emb to set input size
+
+			# State obs
+			z = None
+			if self.cfg.obs == 'state':
+				# z = self.task_emb(obs, task)
+				z = {"inputs": obs, "task_embedding": task}
+			# State and RGB obs
+			elif self.cfg.obs == 'rgb':
+				assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"
+				z = {"inputs": torch.cat([obs['state'], obs['rgb']], dim=-1), "task_embedding": task}
+				
+			init_carry=self._encoder['state'].initial_carry(z)
+			out = self._encoder['state'](init_carry, z)[1]['logits']
+			print("Encode() output: ", out)
+			return out
+
 		else:
+			# State obs
 			if self.cfg.obs == 'state':
 				return self._encoder[self.cfg.obs](self.task_emb(obs, task))
+			
+			# State and RGB obs
 			assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"
 			z = torch.cat([self.task_emb(obs['state'], task), obs['rgb']], dim=-1)
-			return self._encoder['state'](z)
+			return self._encoder['state'](z)[1]
 
 		# z_rgb = self._encoder['rgb'](obs['rgb'])
 		# return torch.stack((z_state, z_rgb), dim=0).mean(0)

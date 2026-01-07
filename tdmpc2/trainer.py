@@ -36,8 +36,8 @@ class Trainer():
 			dtype=torch.int32, device='cpu')
 		self._episode_lengths = torch.tensor(split_by_rank(cfg.episode_lengths, cfg.rank, cfg.world_size),
 			dtype=torch.int32, device='cpu')
-		if cfg.task != 'soup':
-			self._tasks = self._tasks.repeat_interleave(cfg.num_envs)
+		if cfg.task != 'soup' and len(self._tasks) < cfg.num_envs:
+			self._tasks = self._tasks.repeat_interleave(cfg.num_envs // len(self._tasks))
 		assert self.cfg.episode_length in self._episode_lengths, \
 			f'[Rank {cfg.rank}] Expected maximum episode length {self.cfg.episode_length} to be in {self._episode_lengths.tolist()}.'
 		self._tds = TensorDict({}, batch_size=(self.cfg.episode_length+1, self.cfg.num_envs), device='cpu')

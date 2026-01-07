@@ -31,7 +31,7 @@ class Config:
 
 	# training
 	steps: int = 100_000_000								# total environment steps to train for
-	batch_size: int = 1024									# effective batch size across all devices
+	batch_size: int = 128									# effective batch size across all devices
 	utd: float = 0.075										# update-to-data ratio, i.e., model updates per environment step
 	reward_coef: float = 0.1								# coefficient for reward prediction loss
 	value_coef: float = 0.1									# coefficient for value prediction loss
@@ -107,7 +107,7 @@ class Config:
 	# TRM config
 	# batch_size: defined above
 	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
-	seq_len: int = 1024  									# if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
+	seq_len: int = 1024  									# Currently ignored. if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
     
 	# task_emb_len: int = 512								# length of task identifier embeddings. Defined during runtime as task_embeddings
     # task_emb_ndim: defined as task_dim above
@@ -119,9 +119,9 @@ class Config:
 	L_layers: int = 2
 
 	# Transformer config
-	hidden_size: int = 256									# Large effect on TRM total parameter size
+	hidden_size: int = 256									# Currently ignored and set during runtime. Large effect on TRM total parameter size
 	expansion: float = 4.0
-	num_heads: int = 4
+	num_heads: int = 16
 	pos_encodings: str = "rope"								# "rope" or "learned"
 
 	rms_norm_eps: float = 1e-5

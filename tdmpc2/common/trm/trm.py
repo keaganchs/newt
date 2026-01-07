@@ -73,8 +73,9 @@ class TRMBlock(nn.Module):
         
 
         self.config = config
+        
+        # MLP or Attention layers
         if self.config.mlp_t:
-            self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_emb_len == 0 else self.config.task_emb_len
             self.mlp_t = SwiGLU(
                 hidden_size=self.config.seq_len + self.task_emb_len, # L
                 expansion=config.expansion,
@@ -144,7 +145,7 @@ class TRMInner(nn.Module):
         
         if self.config.task_dim > 0:
             # Zero init task embeddings
-            self.task_emb = CastedSparseEmbedding(self.config.num_tasks, self.config.task_dim,
+            self.task_emb = CastedSparseEmbedding(len(self.config.task_embeddings), self.config.task_dim,
                                                     batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype)
 
         # LM Blocks
@@ -170,13 +171,13 @@ class TRMInner(nn.Module):
             self.q_head.weight.zero_()
             self.q_head.bias.fill_(-5)  # type: ignore
 
-    def _input_embeddings(self, input: torch.Tensor, task_identifiers: torch.Tensor):
+    def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
         # Token embedding
         embedding = self.embed_tokens(input.to(torch.int32))
 
         # Task embeddings
         if self.config.task_dim > 0:
-            task_embedding = self.task_emb(task_identifiers)
+            task_embedding = self.task_emb(task_embedding)
             
             pad_count = self.task_emb_len * self.config.hidden_size - task_embedding.shape[-1]
             if pad_count > 0:
@@ -198,6 +199,9 @@ class TRMInner(nn.Module):
         )
         
     def reset_carry(self, reset_flag: torch.Tensor, carry: TRMInnerCarry):
+        print(f"Reset carry called with reset_flag shape: {reset_flag.shape} and carry.z_H shape: {carry.z_H.shape}")
+        
+        
         return TRMInnerCarry(
             z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
             z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
@@ -209,7 +213,7 @@ class TRMInner(nn.Module):
         )
 
         # Input encoding
-        input_embeddings = self._input_embeddings(batch["inputs"], batch["task_identifiers"])
+        input_embeddings = self._input_embeddings(batch["inputs"], batch["task_embedding"])
 
         # Forward iterations
         z_H, z_L = carry.z_H, carry.z_L
@@ -236,9 +240,21 @@ class TRM(nn.Module):
     """Tiny Recursion Model (TRM) with Adaptive Computation Time (ACT)"""
 
     def __init__(self, config: Config):
-        super().__init__()
         self.config = config
+
+        # Calculate task embedding length
+        if config.obs == 'state':
+            config.hidden_size = config.obs_shape['state'][0] + config.task_dim
+            config.seq_len = config.obs_shape['state'][0]
+        elif config.obs == 'rgb':
+            config.hidden_size = config.obs_shape['state'][0] + config.task_dim + config.obs_shape['rgb'][0]
+            config.seq_len = config.obs_shape['state'][0] + config.obs_shape['rgb'][0]
+        else:
+            raise NotImplementedError(f"Unexpected observation type: {config.obs}")
+
+        super().__init__()
         self.inner = TRMInner(self.config)
+        # self.out_proj = nn.Linear(config.hidden_size, config.latent_dim + config.task_dim)
 
     @property
     def task_emb(self):
@@ -257,13 +273,15 @@ class TRM(nn.Module):
         )
         
     def forward(self, carry: TRMCarry, batch: Dict[str, torch.Tensor]) -> Tuple[TRMCarry, Dict[str, torch.Tensor]]:
-
         # Update data, carry (removing halted sequences)
         new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
-        
         new_steps = torch.where(carry.halted, 0, carry.steps)
+        new_current_data = {}
 
-        new_current_data = {k: torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v) for k, v in carry.current_data.items()}
+        for k, v in carry.current_data.items():
+            if batch[k].shape[0] != carry.halted.shape[0]:
+                raise ValueError(f"Batch dimension mismatch for key '{k}'. Expected {carry.halted.shape[0]} (based on halted), but got {batch[k].shape[0]}.")
+            new_current_data[k] = torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v)
 
         # Forward inner model
         new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(new_inner_carry, new_current_data)
