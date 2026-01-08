@@ -142,21 +142,31 @@ class WorldModel(nn.Module):
 			elif self.cfg.obs == 'rgb':
 				assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"
 				z = {"inputs": torch.cat([obs['state'], obs['rgb']], dim=-1), "task_embedding": task}
-				
+			else:
+				raise ValueError(f"Unsupported observation type: {self.cfg.obs}")
+
 			init_carry=self._encoder['state'].initial_carry(z)
 			out = self._encoder['state'](init_carry, z)[1]['logits']
-			print("Encode() output: ", out)
+
 			return out
 
 		else:
 			# State obs
+			z = None
 			if self.cfg.obs == 'state':
-				return self._encoder[self.cfg.obs](self.task_emb(obs, task))
-			
+				z = self.task_emb(obs, task)
 			# State and RGB obs
-			assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"
-			z = torch.cat([self.task_emb(obs['state'], task), obs['rgb']], dim=-1)
-			return self._encoder['state'](z)[1]
+			elif self.cfg.obs == 'rgb':
+				assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"
+				z = torch.cat([self.task_emb(obs['state'], task), obs['rgb']], dim=-1)
+			else:
+				raise ValueError(f"Unsupported observation type: {self.cfg.obs}")
+			
+			out = self._encoder[self.cfg.obs](z)
+			if self.cfg.obs == 'rgb':
+				out = out[1]
+			# print("Encode() output shape: ", out.shape)
+			return out
 
 		# z_rgb = self._encoder['rgb'](obs['rgb'])
 		# return torch.stack((z_state, z_rgb), dim=0).mean(0)
@@ -215,6 +225,9 @@ class WorldModel(nn.Module):
 		# Reparameterization trick
 		action = mean + eps * log_std.exp()
 		mean, action, log_prob = math.squash(mean, action, log_prob)
+		# mean = mean.to(getattr(torch, self.cfg.forward_dtype))
+		action = action.to(torch.float32)
+		# log_prob = log_prob.to(getattr(torch, self.cfg.forward_dtype))
 
 		entropy_scale = scaled_log_prob / (log_prob + 1e-8)
 		info = TensorDict({

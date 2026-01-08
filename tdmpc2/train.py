@@ -3,6 +3,7 @@ os.environ['MUJOCO_GL'] = os.getenv("MUJOCO_GL", 'egl')
 os.environ['LAZY_LEGACY_OP'] = '0'
 os.environ["TORCH_DISTRIBUTED_TIMEOUT"] = "1800"
 os.environ['TORCHDYNAMO_INLINE_INBUILT_NN_MODULES'] = "1"
+os.environ['TORCHDYNAMO_VERBOSE'] = "1" 
 os.environ['TORCH_LOGS'] = "+recompiles"
 import warnings
 warnings.filterwarnings('ignore')

@@ -125,16 +125,23 @@ class TRMReasoningModule(nn.Module):
 
 class TRMInner(nn.Module):
     def __init__(self, config: Config) -> None:
-        super().__init__()
         self.config = config
-        self.forward_dtype = getattr(torch, self.config.forward_dtype)
+        self.forward_dtype = torch.bfloat16
+        # Get pytorch dtype from config string
+        if hasattr(self.config, 'forward_dtype'):
+            try:
+                self.forward_dtype = getattr(torch, self.config.forward_dtype)
+            except AttributeError:
+                raise ValueError(f"Invalid torch dtype: {self.config.forward_dtype}")
+
+        super().__init__()
 
         # I/O
         self.embed_scale = math.sqrt(self.config.hidden_size)
         embed_init_std = 1.0 / self.embed_scale
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        self.lm_head      = CastedLinear(self.config.hidden_size, self.config.vocab_size, bias=False)
+        self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False)
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
 
         # Take number of of embeddings
@@ -192,16 +199,13 @@ class TRMInner(nn.Module):
         # Scale
         return self.embed_scale * embedding
 
-    def empty_carry(self, batch_size: int):
+    def empty_carry(self, batch_size: int, device: Optional[torch.device] = None) -> TRMInnerCarry:
         return TRMInnerCarry(
-            z_H=torch.empty(batch_size, self.config.seq_len + self.task_emb_len, self.config.hidden_size, dtype=self.forward_dtype),
-            z_L=torch.empty(batch_size, self.config.seq_len + self.task_emb_len, self.config.hidden_size, dtype=self.forward_dtype),
+            z_H=torch.empty(batch_size, self.config.seq_len + self.task_emb_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
+            z_L=torch.empty(batch_size, self.config.seq_len + self.task_emb_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
         )
         
     def reset_carry(self, reset_flag: torch.Tensor, carry: TRMInnerCarry):
-        print(f"Reset carry called with reset_flag shape: {reset_flag.shape} and carry.z_H shape: {carry.z_H.shape}")
-        
-        
         return TRMInnerCarry(
             z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
             z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
@@ -262,12 +266,13 @@ class TRM(nn.Module):
 
     def initial_carry(self, batch: Dict[str, torch.Tensor]):
         batch_size = batch["inputs"].shape[0]
+        device = batch["inputs"].device
 
         return TRMCarry(
-            inner_carry=self.inner.empty_carry(batch_size),  # Empty is expected, it will be reseted in first pass as all sequences are halted.
+            inner_carry=self.inner.empty_carry(batch_size, device=device),  # Empty is expected, it will be reseted in first pass as all sequences are halted.
             
-            steps=torch.zeros((batch_size, ), dtype=torch.int32),
-            halted=torch.ones((batch_size, ), dtype=torch.bool),  # Default to halted
+            steps=torch.zeros((batch_size, ), dtype=torch.int32, device=device),
+            halted=torch.ones((batch_size, ), dtype=torch.bool, device=device),  # Default to halted
             
             current_data={k: torch.empty_like(v) for k, v in batch.items()}
         )
@@ -285,6 +290,9 @@ class TRM(nn.Module):
 
         # Forward inner model
         new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(new_inner_carry, new_current_data)
+
+        # Cast logit dtype to float32 for gym compatibility
+        logits = logits.to(torch.float32)
 
         outputs = {
             "logits": logits,

@@ -135,6 +135,8 @@ class TDMPC2(torch.nn.Module):
 			action, info = self.pi(obs, task)
 			if eval_mode:
 				action = info["mean"]
+
+		# action = action.to(torch.float32)
 		return action.cpu()
 	
 	@torch.no_grad()

@@ -108,6 +108,7 @@ class VectorizedMultitaskWrapper(gym.Wrapper):
 	def rand_act(self):
 		return torch.rand((self.cfg.num_envs, *self.action_space.shape)) * 2 - 1
 	
+	# TODO: check datatypes
 	def _preprocess_obs(self, obs):
 		if self.cfg.obs == 'state':
 			obs = torch.tensor(obs, dtype=torch.float32)

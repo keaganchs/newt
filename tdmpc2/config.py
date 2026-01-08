@@ -85,7 +85,7 @@ class Config:
 	enc_dim: int = 256										# encoder mlp width, overridden by model_size. Large effect on TRM total parameter size
 	mlp_dim: int = 1024										# model mlp width, overridden by model_size
 	
-	latent_dim: int = 512									# model latent state dim, overridden by model_size
+	latent_dim: int = 256									# model latent state dim, overridden by model_size
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
