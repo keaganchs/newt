@@ -53,8 +53,11 @@ class TDMPC2(torch.nn.Module):
 		if self.compile and self.cfg.rank == 0:
 			print('Compiling methods...')
 		self.pi = self._maybe_compile(self._pi)
-		self.sample_pi_trajs = self._maybe_compile(self._sample_pi_trajs)
-		self.mppi = self._maybe_compile(self._mppi)
+		# TODO: enable compilation when multiproc is fixed
+		# self.sample_pi_trajs = self._maybe_compile(self._sample_pi_trajs)
+		# self.mppi = self._maybe_compile(self._mppi)
+		self.sample_pi_trajs = self._sample_pi_trajs
+		self.mppi = self._mppi
 		self.pi_loss = self._maybe_compile(self._pi_loss)
 		self.loss_fn = self._maybe_compile(self._loss_fn)
 
