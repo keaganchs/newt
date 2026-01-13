@@ -50,14 +50,17 @@ class Buffer:
 			strict_length=True,
 			cache_values=cache_values,
 			use_gpu=True,
-			compile=not self._multiproc and compile,
+			# TODO: enable compile when multiproc is fixed
+			# compile=not self._multiproc and compile,
+			compile=False,
 		)
 		self._storage = LazyTensorStorage(self._capacity, device=self._storage_device)
 		self._buffer = ReplayBuffer(
 			storage=self._storage,
 			sampler=self._sampler,
 			pin_memory=False,
-			prefetch=None if self._multiproc else 8,
+			# TODO: update prefetch when multiproc is fixed
+			prefetch=None, #if self._multiproc else 8,
 			batch_size=self._sample_size,
 			shared=self._multiproc,
 			transform=transform,
