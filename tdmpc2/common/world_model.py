@@ -125,31 +125,43 @@ class WorldModel(nn.Module):
 		Keagan: added option to use a Tiny Recursion Model (TRM)
 		"""
 		if self.cfg.use_trm_encoder:
-			# Match dims of task descriptions (embedding is handled in the TRM module)
-			# while task.ndim < len(obs.shape[:-1]):
-			# 	if isinstance(task, int):
-			# 		task = torch.tensor([task], device=obs.device)
-			# 	task = task.unsqueeze(-1)
-
-			# Use task_emb to set input size
-
-			# State obs
-			z = None
+			# Flatten time and batch dimensions for TRM encoder: [T, B, D] -> [T*B, D]
 			if self.cfg.obs == 'state':
-				# z = self.task_emb(obs, task)
-				z = {"inputs": obs, "task_embedding": task}
-			# State and RGB obs
+				_obs = obs
 			elif self.cfg.obs == 'rgb':
 				assert isinstance(obs, TensorDict), "Expected observation to be a TensorDict"
-				z = {"inputs": torch.cat([obs['state'], obs['rgb']], dim=-1), "task_embedding": task}
+				_obs = torch.cat([obs['state'], obs['rgb']], dim=-1)
 			else:
 				raise ValueError(f"Unsupported observation type: {self.cfg.obs}")
+
+			batch_shape = _obs.shape[:-1]
+			_obs_flat = _obs.view(-1, _obs.shape[-1])
+			
+			if isinstance(task, int):
+				# TODO: double-check 
+				# task = torch.full(batch_shape, task, device=_obs.device)
+				task = torch.tensor([task], device=_obs.device) 
+			
+			# Broadcast task to match obs batch dimensions
+			if task.ndim < len(batch_shape):
+				# Expand task dims to match obs dims ([B] -> [T, B])
+				# TODO: confirm the task embedding corresponds to the last batch dim
+				view_shape = [1] * (len(batch_shape) - task.ndim) + list(task.shape)
+				task = task.view(*view_shape).expand(batch_shape)
+			elif task.shape != batch_shape:
+				# Try direct broadcast
+				task = task.expand(batch_shape)
+			
+			_task_flat = task.reshape(-1)
+
+			z = {"inputs": _obs_flat, "task_embedding": _task_flat}
 
 			init_carry=self._encoder['state'].initial_carry(z)
 			out = self._encoder['state'](init_carry, z)[1]['logits']
 
-			return out
-
+			# TODO: Confirm taking the mean of the logits is the right approach here
+			return out.mean(1).view(*batch_shape, -1)
+		# Default MLP encoder
 		else:
 			# State obs
 			z = None
@@ -165,17 +177,7 @@ class WorldModel(nn.Module):
 			out = self._encoder[self.cfg.obs](z)
 			if self.cfg.obs == 'rgb':
 				out = out[1]
-			# print("Encode() output shape: ", out.shape)
 			return out
-
-		# z_rgb = self._encoder['rgb'](obs['rgb'])
-		# return torch.stack((z_state, z_rgb), dim=0).mean(0)
-		
-		# z_state = self._encoder['state'](self.task_emb(obs['state'], task))
-		# z_cat = torch.cat([z_state, self.task_emb(obs['rgb'], task)], dim=-1)
-		# out = self._encoder['rgb'](z_cat)
-		
-		return out
 
 	def next(self, z, a, task):
 		"""
