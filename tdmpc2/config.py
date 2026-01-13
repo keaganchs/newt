@@ -79,7 +79,7 @@ class Config:
 	vmax: float = +10.0										# max (log) value for discrete regression
 
 	# architecture
-	model_size: Optional[str] = None						# model size, see tdmpc2/common/__init__.py for options
+	model_size: Optional[str] = 'B'							# model size, see tdmpc2/common/__init__.py for options
 	num_enc_layers: int = 3									# number of encoder layers, overridden by model_size
 	
 	enc_dim: int = 256										# encoder mlp width, overridden by model_size. Large effect on TRM total parameter size
@@ -93,6 +93,7 @@ class Config:
 	# logging
 	wandb_project: str = "newt_trm"							# wandb project name
 	wandb_entity: str = "keagan"							# wandb entity (user) name
+	wandb_run_name: Optional[str] = None					# wandb run name (defaults to <seed>)
 	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
