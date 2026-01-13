@@ -27,4 +27,5 @@ python $PYTHON_SCRIPT \
     model_size="B" \
     wandb_project="newt_trm" \
     wandb_entity="keagan" \
+    wandb_run_name="mlp_baseline" \
     enable_wandb=True \
