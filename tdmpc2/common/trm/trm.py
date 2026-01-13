@@ -141,6 +141,11 @@ class TRMInner(nn.Module):
         embed_init_std = 1.0 / self.embed_scale
 
         self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+        # TODO: handle continuous inputs properly: currently checks if input is floating point and uses a linear layer
+        self.embed_continuous = CastedLinear(1, self.config.hidden_size, bias=False)
+        with torch.no_grad():
+            trunc_normal_init_(self.embed_continuous.weight, std=embed_init_std)
+
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False)
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
 
@@ -180,7 +185,11 @@ class TRMInner(nn.Module):
 
     def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
         # Token embedding
-        embedding = self.embed_tokens(input.to(torch.int32))
+        # TODO: update code to handle continuous inputs (add discretization flag, int casting only when enabled; check tokeniztion/vocab size etc.)
+        if input.is_floating_point():
+            embedding = self.embed_continuous(input.unsqueeze(-1))
+        else:
+            embedding = self.embed_tokens(input.to(torch.int32))
 
         # Task embeddings
         if self.config.task_dim > 0:
