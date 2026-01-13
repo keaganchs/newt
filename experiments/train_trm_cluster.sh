@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="$SCRIPT_DIR/../tdmpc2/train.py"
 
 # Run
-python $PYTHON_SCRIPT \
+python3 $PYTHON_SCRIPT \
     task="mujoco" \
     use_trm_encoder=False \
     obs="state" \
