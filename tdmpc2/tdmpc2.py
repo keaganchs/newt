@@ -274,15 +274,14 @@ class TDMPC2(torch.nn.Module):
 		# Compute total policy loss
 		pi_loss = (pi_prior_loss + maxq_loss).mean()
 
-		info = TensorDict({
+		return pi_loss, qs[0].detach(), {
 			"pi_prior_loss": pi_prior_loss.mean(),
 			"pi_loss": pi_loss,
 			"pi_entropy": info["entropy"],
 			"pi_scaled_entropy": info["scaled_entropy"],
 			"pi_std": info["log_std"].exp().mean(),
 			"pi_max_std": info["log_std"].exp().max(),
-		})
-		return pi_loss, qs[0].detach(), info
+		}
 	
 	def update_pi(self, zs, action, task):
 		"""
@@ -374,7 +373,7 @@ class TDMPC2(torch.nn.Module):
 			bc_loss = math.masked_bc_per_timestep(pi_action, action, task, self.model._action_masks)
 			entropy_loss = -self.cfg.entropy_coef*pi_info["scaled_entropy"].squeeze(-1)
 			pi_prior_loss = ((bc_loss + entropy_loss) * self.rho[:-1, None]).mean()
-			pi_info = TensorDict({
+			pi_info = {
 				"bc_loss": bc_loss,
 				"entropy_loss": entropy_loss,
 				"pi_prior_loss": pi_prior_loss,
@@ -382,10 +381,10 @@ class TDMPC2(torch.nn.Module):
 				"pi_scaled_entropy": pi_info["scaled_entropy"],
 				"pi_std": pi_info["log_std"].exp().mean(),
 				"pi_max_std": pi_info["log_std"].exp().max(),
-			})
+			}
 		else:
 			pi_prior_loss = 0
-			pi_info = TensorDict({})
+			pi_info = {}
 
 		total_loss = (
 			self.cfg.consistency_coef * consistency_loss +
@@ -394,15 +393,15 @@ class TDMPC2(torch.nn.Module):
 			self.cfg.prior_coef * pi_prior_loss
 		)
 
-		info = TensorDict({
+		info = {
 			"consistency_loss": consistency_loss,
 			"reward_loss": reward_loss,
 			"value_loss": value_loss,
 			"total_loss": total_loss,
-		})
+		}
 		info.update(pi_info)
 
-		return total_loss, zs.detach(), info.detach()
+		return total_loss, zs.detach(), {k: v.detach() for k, v in info.items()}
 
 	def update(self, buffer):
 		"""
@@ -452,4 +451,4 @@ class TDMPC2(torch.nn.Module):
 				"lr": self.scheduler.current_lr(0, 1),
 				"lr_pi": self.scheduler.current_lr(1, 0),
 			})
-		return info.detach().mean()
+		return {k: v.cpu().item() if isinstance(v, torch.Tensor) and v.numel() == 1 else v for k, v in info.items()}
