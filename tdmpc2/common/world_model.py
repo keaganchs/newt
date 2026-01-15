@@ -232,12 +232,12 @@ class WorldModel(nn.Module):
 		# log_prob = log_prob.to(getattr(torch, self.cfg.forward_dtype))
 
 		entropy_scale = scaled_log_prob / (log_prob + 1e-8)
-		info = TensorDict({
+		info = {
 			"mean": mean,
 			"log_std": log_std,
 			"entropy": -log_prob,
 			"scaled_entropy": -log_prob * entropy_scale,
-		})
+		}
 		return action, info
 
 	def Q(self, z, a, task, return_type='min', target=False, detach=False):
