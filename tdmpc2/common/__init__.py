@@ -25,6 +25,29 @@ MODEL_SIZE = {
 			'num_q': 7},
 }
 
+TRM_SIZE = {
+	'S':   {'enc_dim': 128,
+		  	'num_heads': 16,
+			'H_cycles': 2,
+			'L_cycles': 4,
+			'L_layers': 2,},
+	'B':   {'enc_dim': 256,
+		  	'num_heads': 16,
+			'H_cycles': 2,
+			'L_cycles': 8,
+			'L_layers': 2,},
+	'L':   {'enc_dim': 512,
+		  	'num_heads': 16,
+			'H_cycles': 3,
+			'L_cycles': 16,
+			'L_layers': 2,},
+	'XL':  {'enc_dim': 1024,
+			'num_heads': 16,
+			'H_cycles': 4,
+			'L_cycles': 16,
+			'L_layers': 4,},
+}
+
 TASK_SET = {
 	'dmcontrol': [  # 21 tasks
 		'walker-stand', 'walker-walk', 'walker-run', 'cheetah-run', 'reacher-easy',

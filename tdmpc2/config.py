@@ -9,7 +9,7 @@ import hydra
 from termcolor import colored
 from omegaconf import OmegaConf
 
-from common import MODEL_SIZE, TASK_SET
+from common import MODEL_SIZE, TASK_SET, TRM_SIZE
 from common.math import discount_heuristic
 
 
@@ -20,9 +20,9 @@ class Config:
 	"""
 
 	# environment
-	task: str = "mujoco"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
+	task: str = "dmcontrol"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
 	obs: str = "state"										# observation type, one of ["state", "rgb"]
-	num_envs: int = 6										# number of parallel environments, overridden if task is "soup"
+	num_envs: int = 1										# number of parallel environments, overridden if task is "soup"
 	env_mode: str = "async"									# environment mode, one of ["async", "sync"]
 
 	# evaluation
@@ -45,7 +45,7 @@ class Config:
 	discount_denom: int = 5									# denominator for discount factor heuristic
 	discount_min: float = 0.95								# minimum discount factor
 	discount_max: float = 0.995								# maximum discount factor
-	buffer_size: int = 10_000_000							# replay buffer capacity
+	buffer_size: int = 1_000_000							# replay buffer capacity
 	use_demos: bool = True									# whether to use demonstration data
 	demo_steps: int = 200_000								# number of pretraining steps on demonstration data
 	lr_schedule: Optional[str] = None						# learning rate schedule, one of [None, "warmup"]
@@ -79,7 +79,8 @@ class Config:
 	vmax: float = +10.0										# max (log) value for discrete regression
 
 	# architecture
-	model_size: Optional[str] = 'B'							# model size, see tdmpc2/common/__init__.py for options
+	model_size: Optional[str] = 'S'							# model size, see tdmpc2/common/__init__.py for options
+	trm_size: Optional[str] = None							# TRM size, defaults to model_size; see tdmpc2/common/__init__.py for options
 	num_enc_layers: int = 3									# number of encoder layers, overridden by model_size
 	
 	enc_dim: int = 256										# encoder mlp width, overridden by model_size. Large effect on TRM total parameter size
@@ -107,7 +108,7 @@ class Config:
 
 	# TRM config
 	# batch_size: defined above
-	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
+	use_trm_encoder: bool = False							# whether to use TRM encoder for state observations
 	seq_len: int = 1024  									# Currently ignored. if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
     
 	# task_emb_len: int = 512								# length of task identifier embeddings. Defined during runtime as task_embeddings
@@ -184,6 +185,14 @@ def parse_cfg(cfg):
 			f'Invalid model size {cfg.model_size}. Must be one of {list(MODEL_SIZE.keys())}'
 		for k, v in MODEL_SIZE[cfg.model_size].items():
 			cfg[k] = v
+			# TRM size
+			if cfg.use_trm_encoder:
+				if cfg.get('trm_size', None) is None:
+					cfg['trm_size'] = cfg.model_size
+				assert cfg.trm_size in TRM_SIZE.keys(), \
+					f'Invalid TRM size {cfg.trm_size}. Must be one of {list(TRM_SIZE.keys())}'
+				for k, v in TRM_SIZE[cfg.trm_size].items():
+					cfg[k] = v
 
 	# Set defaults
 	cfg.tasks = TASK_SET.get(cfg.task, [cfg.task] * cfg.num_envs)
