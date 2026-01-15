@@ -59,8 +59,8 @@ class Buffer:
 			storage=self._storage,
 			sampler=self._sampler,
 			pin_memory=False,
-			# TODO: update prefetch when multiproc is fixed
-			prefetch=None, #if self._multiproc else 8,
+			# Prefetch disabled as there is no significant speedup observed, and enabling leads to issues with CPU->GPU transfers
+			prefetch=None, # if self._multiproc else 8,
 			batch_size=self._sample_size,
 			shared=self._multiproc,
 			transform=transform,
