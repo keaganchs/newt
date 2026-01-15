@@ -146,8 +146,9 @@ class TRMInner(nn.Module):
         with torch.no_grad():
             trunc_normal_init_(self.embed_continuous.weight, std=embed_init_std)
 
-        self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False)
-        self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True)
+        # TODO: Accept device arg
+        self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False).to(device="cuda")
+        self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda")
 
         # Take number of of embeddings
         if self.config.task_embeddings is not None:
@@ -157,25 +158,28 @@ class TRMInner(nn.Module):
         
         if self.config.task_dim > 0:
             # Zero init task embeddings
+            # TODO: add device arg
             self.task_emb = CastedSparseEmbedding(len(self.config.task_embeddings), self.config.task_dim,
-                                                    batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype)
+                                                    batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype).to(device="cuda")
 
         # LM Blocks
+        # TODO: add device arg
         if self.config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,
                                               max_position_embeddings=self.config.seq_len + self.task_emb_len,
-                                              base=self.config.rope_theta)
+                                              base=self.config.rope_theta).to(device="cuda")
         elif self.config.pos_encodings == "learned":
-            self.embed_pos = CastedEmbedding(self.config.seq_len + self.task_emb_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+            self.embed_pos = CastedEmbedding(self.config.seq_len + self.task_emb_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype).to(device="cuda")
         else:
             pass
 
         # Reasoning Layers
-        self.L_level = TRMReasoningModule(layers=[TRMBlock(self.config) for _i in range(self.config.L_layers)])
+        self.L_level = TRMReasoningModule(layers=[TRMBlock(self.config).to(device="cuda") for _i in range(self.config.L_layers)])
 
         # Initial states
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
-        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
+        # TODO: add device arg
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
+        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -226,7 +230,7 @@ class TRMInner(nn.Module):
         )
 
         # Input encoding
-        input_embeddings = self._input_embeddings(batch["inputs"], batch["task_embedding"])
+        input_embeddings = self._input_embeddings(batch["inputs"], batch["task_embedding"]).to(device=carry.z_H.device)
 
         # Forward iterations
         z_H, z_L = carry.z_H, carry.z_L
@@ -243,6 +247,7 @@ class TRMInner(nn.Module):
         z_H = self.L_level(z_H, z_L, **seq_info)
 
         # LM Outputs
+        # TODO: add device arg
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
         output = self.lm_head(z_H)[:, self.task_emb_len:]
         q_logits = self.q_head(z_H[:, 0]).to(torch.float32) # Q-head; uses the first task_emb position
@@ -266,7 +271,8 @@ class TRM(nn.Module):
             raise NotImplementedError(f"Unexpected observation type: {config.obs}")
 
         super().__init__()
-        self.inner = TRMInner(self.config)
+        # TODO: Accept device arg
+        self.inner = TRMInner(self.config).to(torch.device('cuda'))
         # self.out_proj = nn.Linear(config.hidden_size, config.latent_dim + config.task_dim)
 
     @property
