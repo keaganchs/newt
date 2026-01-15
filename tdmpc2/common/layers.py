@@ -165,7 +165,7 @@ def enc(cfg, out={}):
 	Returns a dictionary of encoders for each observation in the dict.
 	"""
 	if cfg.use_trm_encoder:
-		out['state'] = TRM(cfg)
+		out['state'] = TRM(cfg).to(torch.device('cuda'))
 	else:
 		if cfg.obs == 'state':
 			out['state'] = mlp(cfg.obs_shape['state'][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
