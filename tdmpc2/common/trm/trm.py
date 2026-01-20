@@ -76,8 +76,13 @@ class TRMBlock(nn.Module):
         
         # MLP or Attention layers
         if self.config.mlp_t:
+            if self.config.task_dim > 0:
+                 task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
+            else:
+                 task_emb_len = 0
+
             self.mlp_t = SwiGLU(
-                hidden_size=self.config.seq_len + self.task_emb_len, # L
+                hidden_size=self.config.seq_len + task_emb_len, # L
                 expansion=config.expansion,
             )
         else:
@@ -96,12 +101,12 @@ class TRMBlock(nn.Module):
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         # B, L, D = hidden_states.shape
-        # Post Norm
+        # Post Norm. Adding .contiguous() gives a small speedup to the matrix multiplications
         if self.config.mlp_t:
-            hidden_states = hidden_states.transpose(1,2)
+            hidden_states = hidden_states.transpose(1,2).contiguous()
             out = self.mlp_t(hidden_states)
             hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
-            hidden_states = hidden_states.transpose(1,2)
+            hidden_states = hidden_states.transpose(1,2).contiguous()
         else:
             # Self Attention
             hidden_states = rms_norm(hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states), variance_epsilon=self.norm_eps)
@@ -151,16 +156,27 @@ class TRMInner(nn.Module):
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda")
 
         # Take number of of embeddings
-        if self.config.task_embeddings is not None:
-            self.task_emb_len = len(self.config.task_embeddings) // self.config.hidden_size
+        if self.config.task_dim > 0:
+             self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
         else:
-            self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size)  if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
+             self.task_emb_len = 0
         
         if self.config.task_dim > 0:
             # Zero init task embeddings
             # TODO: add device arg
             self.task_emb = CastedSparseEmbedding(len(self.config.task_embeddings), self.config.task_dim,
                                                     batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype).to(device="cuda")
+            
+            # Initialize with task_embeddings from config if available
+            if self.config.task_embeddings is not None and len(self.config.task_embeddings) > 0:
+                try:
+                    pretrained_weights = torch.tensor(self.config.task_embeddings, dtype=torch.float32)
+                    if pretrained_weights.shape == self.task_emb.weights.shape:
+                        with torch.no_grad():
+                            self.task_emb.weights.copy_(pretrained_weights)
+                            print(f"Initialized TRM task embeddings from config with shape {pretrained_weights.shape}")
+                except Exception as e:
+                    print(f"Failed to initialize TRM task embeddings from config: {e}")
 
         # LM Blocks
         # TODO: add device arg
@@ -262,10 +278,10 @@ class TRM(nn.Module):
 
         # Calculate task embedding length
         if config.obs == 'state':
-            config.hidden_size = config.obs_shape['state'][0] + config.task_dim
+            # Note: hidden_size is kept from config (e.g., 256) to maintain model size. 
+            # seq_len is set to state dimension to process each feature as a token.
             config.seq_len = config.obs_shape['state'][0]
         elif config.obs == 'rgb':
-            config.hidden_size = config.obs_shape['state'][0] + config.task_dim + config.obs_shape['rgb'][0]
             config.seq_len = config.obs_shape['state'][0] + config.obs_shape['rgb'][0]
         else:
             raise NotImplementedError(f"Unexpected observation type: {config.obs}")
