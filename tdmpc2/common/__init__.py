@@ -26,27 +26,27 @@ MODEL_SIZE = {
 }
 
 TRM_SIZE = {
-	'S':   {'hidden_size': 224, # ~1.5M parameters
-		 	'seq_len': 128,
-		  	'num_heads': 14,
-			'H_cycles': 2,
-			'L_cycles': 4,
+	'S':   {'hidden_size': 16, # ~150k parameters
+		  	'num_heads': 10,
+			'expansion': 2.0,
+			'H_cycles': 3,
+			'L_cycles': 6,
 			'L_layers': 2,},
-	'B':   {'hidden_size': 448, # ~4.8M parameters
-		  	'seq_len': 256,
+	'B':   {'hidden_size': 32,
 		  	'num_heads': 14,
+			'expansion': 4.0,
 			'H_cycles': 2,
 			'L_cycles': 6,
 			'L_layers': 2,},
-	'L':   {'hidden_size': 512, 
-		  	'seq_len': 512,
+	'L':   {'hidden_size': 64, 
 		  	'num_heads': 16,
+			'expansion': 4.0,
 			'H_cycles': 2,
 			'L_cycles': 10,
 			'L_layers': 2,},
-	'XL':  {'hidden_size': 1024,
-			'seq_len': 1024,
+	'XL':  {'hidden_size': 128,
 			'num_heads': 16,
+			'expansion': 8.0,
 			'H_cycles': 3,
 			'L_cycles': 10,
 			'L_layers': 4,},
