@@ -12,7 +12,7 @@
 #SBATCH --gres=gpu:1
 
 
-# If using Slurm, run this script from the root of the repository!
+# If using Slurm, run this script from the newt/experiments/ directory of the repository!
 
 
 # Activate conda environment
