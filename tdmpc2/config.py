@@ -20,9 +20,9 @@ class Config:
 	"""
 
 	# environment
-	task: str = "dmcontrol"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
+	task: str = "mujoco"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
 	obs: str = "state"										# observation type, one of ["state", "rgb"]
-	num_envs: int = 1										# number of parallel environments, overridden if task is "soup"
+	num_envs: int = 6										# number of parallel environments, overridden if task is "soup"
 	env_mode: str = "async"									# environment mode, one of ["async", "sync"]
 
 	# evaluation
@@ -94,7 +94,7 @@ class Config:
 	# logging
 	wandb_project: str = "newt_trm"							# wandb project name
 	wandb_entity: str = "keagan"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = None					# wandb run name (defaults to <seed>)
+	wandb_run_name: Optional[str] = "trm_mlp_s_0"					# wandb run name (defaults to <seed>)
 	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
@@ -108,8 +108,8 @@ class Config:
 
 	# TRM config
 	# batch_size: defined above
-	use_trm_encoder: bool = False							# whether to use TRM encoder for state observations
-	seq_len: int = 1024  									# Currently ignored. if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
+	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
+	seq_len: int = 256  									# Currently ignored. if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
     
 	# task_emb_len: int = 512								# length of task identifier embeddings. Defined during runtime as task_embeddings
     # task_emb_ndim: defined as task_dim above
@@ -135,7 +135,7 @@ class Config:
 
 	forward_dtype: str = "bfloat16"
 
-	mlp_t: bool = False # use mlp on L instead of transformer
+	mlp_t: bool = True # use mlp on L instead of transformer
 
 	# convenience (filled at runtime)
 	work_dir: Optional[str] = None
@@ -193,6 +193,11 @@ def parse_cfg(cfg):
 					f'Invalid TRM size {cfg.trm_size}. Must be one of {list(TRM_SIZE.keys())}'
 				for k, v in TRM_SIZE[cfg.trm_size].items():
 					cfg[k] = v
+			
+			# Overwrite vocab_size to latent_dim for TRM encoder (continuous state encoding)
+			# to avoid allocating massive unused embedding layers.
+			# Also ensures lm_head output dimension matches what TD-MPC2 expects.
+			cfg.vocab_size = cfg.latent_dim
 
 	# Set defaults
 	cfg.tasks = TASK_SET.get(cfg.task, [cfg.task] * cfg.num_envs)
