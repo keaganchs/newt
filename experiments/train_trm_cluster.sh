@@ -29,6 +29,7 @@ python3 $PYTHON_SCRIPT \
     use_trm_encoder=True \
     obs="state" \
     model_size="S" \
+    mlp_t=True \
     wandb_project="newt_trm" \
     wandb_entity="keagan" \
     wandb_run_name="trm_mlp_s_0" \
