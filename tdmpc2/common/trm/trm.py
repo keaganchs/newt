@@ -77,7 +77,7 @@ class TRMBlock(nn.Module):
         # MLP or Attention layers
         if self.config.mlp_t:
             if self.config.task_dim > 0:
-                 task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
+                 task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_embeddings == 0 else self.config.task_embeddings  # ceil div
             else:
                  task_emb_len = 0
 
@@ -157,7 +157,7 @@ class TRMInner(nn.Module):
 
         # Take number of of embeddings
         if self.config.task_dim > 0:
-             self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_emb_len == 0 else self.config.task_emb_len  # ceil div
+             self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_embeddings == 0 else self.config.task_embeddings  # ceil div
         else:
              self.task_emb_len = 0
         
