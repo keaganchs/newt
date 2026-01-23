@@ -20,7 +20,8 @@ eval "$(~/miniconda3/bin/conda shell.bash hook)"
 conda activate newt
 
 # Make paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd $SLURM_SUBMIT_DIR
+SCRIPT_DIR="$SLURM_SUBMIT_DIR"
 PYTHON_SCRIPT="$SCRIPT_DIR/../tdmpc2/train.py"
 
 # Run
