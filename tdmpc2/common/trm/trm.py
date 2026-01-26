@@ -299,6 +299,7 @@ class TRM(nn.Module):
         batch_size = batch["inputs"].shape[0]
         device = batch["inputs"].device
 
+        # TODO: log halted
         return TRMCarry(
             inner_carry=self.inner.empty_carry(batch_size, device=device),  # Empty is expected, it will be reseted in first pass as all sequences are halted.
             
