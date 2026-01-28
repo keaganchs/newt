@@ -210,12 +210,17 @@ class CastedSparseEmbedding(nn.Module):
             # Test mode, no gradient
             return self.weights[inputs].to(self.cast_to)
             
-        # Training mode, fill puzzle embedding from weights
-        with torch.no_grad():
-            self.local_weights.copy_(self.weights[inputs])
-            self.local_ids.copy_(inputs)
+        # Training mode, fill puzzle embedding from weights. Updated from the original implementation
+        batch_size = inputs.shape[0]
+        assert batch_size <= self.local_weights.shape[0], \
+            f"Input batch size {batch_size} exceeds configured batch size {self.local_weights.shape[0]}. " \
+            "CastedSparseEmbedding persistent buffers are too small."
 
-        return self.local_weights.to(self.cast_to)
+        with torch.no_grad():
+            self.local_weights[:batch_size].copy_(self.weights[inputs])
+            self.local_ids[:batch_size].copy_(inputs)
+
+        return self.local_weights[:batch_size].to(self.cast_to)
 
 
 """
