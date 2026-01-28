@@ -149,8 +149,14 @@ class WorldModel(nn.Module):
 				view_shape = [1] * (len(batch_shape) - task.ndim) + list(task.shape)
 				task = task.view(*view_shape).expand(batch_shape)
 			elif task.shape != batch_shape:
-				# Try direct broadcast
-				task = task.expand(batch_shape)
+				# TODO: Assuming dim 0 is batch/env dim, double-check
+				if task.shape[0] > batch_shape[0]:
+					task = task[:batch_shape[0]] 
+				# Try direct broadcast/expand
+				if task.shape != batch_shape:
+					task = task.expand(batch_shape)
+
+			assert task.shape == batch_shape, f"Task shape {task.shape} must match obs batch shape {batch_shape}"
 			
 			_task_flat = task.reshape(-1)
 

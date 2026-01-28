@@ -39,7 +39,7 @@ class Config:
 	prior_coef: float = 10.0								# coefficient for bc prior loss
 	rho: float = 0.5										# temporal weight coefficient for model losses
 	lr: float = 3e-4										# global learning rate
-	enc_lr_scale: float = 0.3								# encoder learning rate scale (wrt global lr)
+	enc_lr_scale: float = 0.3								# encoder learning rate scale (wrt global lr); original trm implementation uses 1e-4 
 	grad_clip_norm: float = 20.0							# gradient clipping norm
 	tau: float = 0.01										# target value network update rate
 	discount_denom: int = 5									# denominator for discount factor heuristic
@@ -87,6 +87,7 @@ class Config:
 	mlp_dim: int = 1024										# model mlp width, overridden by model_size
 	
 	latent_dim: int = 256									# model latent state dim, overridden by model_size
+	use_task_embedding: bool = True							# whether to use task conditioning
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
@@ -111,7 +112,7 @@ class Config:
 	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
 	seq_len: int = 256  									# Currently ignored. if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
     
-	# task_emb_len: int = 512								# length of task identifier embeddings. Defined during runtime as task_embeddings
+	task_emb_len: Optional[int] = None						# Set during runtime. Length of task identifier embeddings, calculated during runtime as len(task_embeddings)
     # task_emb_ndim: defined as task_dim above
 	# num_task_identifiers: int = 220						# Defined as num_tasks below 
 	vocab_size: int = 32768									# CLIP vocab size is 32,768
@@ -121,7 +122,7 @@ class Config:
 	L_layers: int = 2
 
 	# Transformer config
-	hidden_size: int = 256									# Currently ignored and set during runtime. Large effect on TRM total parameter size
+	hidden_size: int = 256									# Transformer hidden size, usually set to latent_dim
 	expansion: float = 4.0
 	num_heads: int = 16
 	pos_encodings: str = "rope"								# "rope" or "learned"
@@ -209,7 +210,9 @@ def parse_cfg(cfg):
 		print(colored(f'Number of tasks in soup: {cfg.num_global_tasks}', 'green', attrs=['bold']))
 	else:
 		cfg.use_demos = False  # Disable demos for single-task training
-		cfg.task_dim = 0  # No task conditioning for single-task training
+	
+	if not cfg.use_task_embedding:
+		cfg.task_dim = 0  # No task conditioning
 	cfg.eval_freq = 20 * 500 * cfg.num_envs
 	cfg.save_freq = 5 * cfg.eval_freq
 

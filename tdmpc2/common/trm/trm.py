@@ -13,7 +13,9 @@ from torch import nn
 from pydantic import BaseModel
 
 from config import Config
+from common.layers import mlp
 from common.trm.trm_layers import trunc_normal_init_, rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear, CastedSparseEmbedding
+
 
 IGNORE_LABEL_ID = -100
 
@@ -68,36 +70,41 @@ class TRMConfig(BaseModel):
 class TRMBlock(nn.Module):
     def __init__(self, config: Config) -> None:
         super().__init__()
-
-        # TODO: Parse TRM arguments from config
-        
-
         self.config = config
         
         # MLP or Attention layers
         if self.config.mlp_t:
-            if self.config.task_dim > 0:
-                 task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_embeddings == 0 else self.config.task_embeddings  # ceil div
-            else:
-                 task_emb_len = 0
-
             self.mlp_t = SwiGLU(
-                hidden_size=self.config.seq_len + task_emb_len, # L
+                hidden_size=self.config.seq_len, # L
                 expansion=config.expansion,
             )
+
+            # Pure MLP version
+            # self.mlp_t = mlp(
+            #     in_dim=self.config.seq_len, # L
+            #     mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
+            #     out_dim=self.config.seq_len,
+            # )
         else:
             self.self_attn = Attention(
-                hidden_size=config.hidden_size,
-                head_dim=config.hidden_size // config.num_heads,
-                num_heads=config.num_heads,
-                num_key_value_heads=config.num_heads,
+                hidden_size=self.config.hidden_size,
+                head_dim=self.config.hidden_size // self.config.num_heads,
+                num_heads=self.config.num_heads,
+                num_key_value_heads=self.config.num_heads,
                 causal=False
             )
         self.mlp = SwiGLU(
             hidden_size=config.hidden_size,
             expansion=config.expansion,
         )
-        self.norm_eps = config.rms_norm_eps
+
+        # Pure MLP version
+        # self.mlp = mlp(
+        #     in_dim=self.config.hidden_size,
+        #     mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
+        #     out_dim=self.config.hidden_size,
+        # )
+        self.norm_eps = self.config.rms_norm_eps
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         # B, L, D = hidden_states.shape
@@ -154,21 +161,18 @@ class TRMInner(nn.Module):
         # TODO: Accept device arg
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False).to(device="cuda")
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda")
-
-        # Take number of of embeddings
-        if self.config.task_dim > 0:
-             self.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) if self.config.task_embeddings == 0 else self.config.task_embeddings  # ceil div
-        else:
-             self.task_emb_len = 0
         
         if self.config.task_dim > 0:
             # Zero init task embeddings
             # TODO: add device arg
-            self.task_emb = CastedSparseEmbedding(len(self.config.task_embeddings), self.config.task_dim,
-                                                    batch_size=self.config.batch_size, init_std=0, cast_to=self.forward_dtype).to(device="cuda")
+            num_tasks = len(self.config.task_embeddings) if self.config.task_embeddings is not None else 1
+            # Newt trains on a flattened batch of sequences with shape (batch_size * horizon)
+            effective_batch_size = self.config.batch_size * self.config.horizon
+            self.task_emb = CastedSparseEmbedding(num_tasks, self.config.task_dim,
+                                                    batch_size=effective_batch_size, init_std=0, cast_to=self.forward_dtype).to(device="cuda")
             
             # Initialize with task_embeddings from config if available
-            if self.config.task_embeddings is not None and len(self.config.task_embeddings) > 0:
+            if self.config.task_embeddings is not None:
                 try:
                     pretrained_weights = torch.tensor(self.config.task_embeddings, dtype=torch.float32)
                     if pretrained_weights.shape == self.task_emb.weights.shape:
@@ -182,10 +186,10 @@ class TRMInner(nn.Module):
         # TODO: add device arg
         if self.config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,
-                                              max_position_embeddings=self.config.seq_len + self.task_emb_len,
+                                              max_position_embeddings=self.config.seq_len,
                                               base=self.config.rope_theta).to(device="cuda")
         elif self.config.pos_encodings == "learned":
-            self.embed_pos = CastedEmbedding(self.config.seq_len + self.task_emb_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype).to(device="cuda")
+            self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype).to(device="cuda")
         else:
             pass
 
@@ -215,11 +219,11 @@ class TRMInner(nn.Module):
         if self.config.task_dim > 0:
             task_embedding = self.task_emb(task_embedding)
             
-            pad_count = self.task_emb_len * self.config.hidden_size - task_embedding.shape[-1]
+            pad_count = self.config.task_emb_len * self.config.hidden_size - task_embedding.shape[-1]
             if pad_count > 0:
                 task_embedding = F.pad(task_embedding, (0, pad_count))
 
-            embedding = torch.cat((task_embedding.view(-1, self.task_emb_len, self.config.hidden_size), embedding), dim=-2)
+            embedding = torch.cat((task_embedding.view(-1, self.config.task_emb_len, self.config.hidden_size), embedding), dim=-2)
         # Position embeddings
         if self.config.pos_encodings == "learned":
             # scale by 1/sqrt(2) to maintain forward variance
@@ -230,8 +234,8 @@ class TRMInner(nn.Module):
 
     def empty_carry(self, batch_size: int, device: Optional[torch.device] = None) -> TRMInnerCarry:
         return TRMInnerCarry(
-            z_H=torch.empty(batch_size, self.config.seq_len + self.task_emb_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
-            z_L=torch.empty(batch_size, self.config.seq_len + self.task_emb_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
+            z_H=torch.empty(batch_size, self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
+            z_L=torch.empty(batch_size, self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
         )
         
     def reset_carry(self, reset_flag: torch.Tensor, carry: TRMInnerCarry):
@@ -265,7 +269,7 @@ class TRMInner(nn.Module):
         # LM Outputs
         # TODO: add device arg
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
-        output = self.lm_head(z_H)[:, self.task_emb_len:]
+        output = self.lm_head(z_H)[:, self.config.task_emb_len:]
         q_logits = self.q_head(z_H[:, 0]).to(torch.float32) # Q-head; uses the first task_emb position
         return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
 
@@ -276,16 +280,21 @@ class TRM(nn.Module):
     def __init__(self, config: Config):
         self.config = config
 
-        # Calculate task embedding length
-        if config.obs == 'state':
-            # Note: hidden_size is kept from config (e.g., 256) to maintain model size. 
-            # seq_len is set to state dimension to process each feature as a token.
-            config.seq_len = config.obs_shape['state'][0]
-        elif config.obs == 'rgb':
-            config.seq_len = config.obs_shape['state'][0] + config.obs_shape['rgb'][0]
+        # Calculate task embedding sequence length (number of tokens needed to represent task_dim)
+        if self.config.task_dim > 0:
+             self.config.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) # ceil div
         else:
-            raise NotImplementedError(f"Unexpected observation type: {config.obs}")
+             self.config.task_emb_len = 0
 
+        # Calculate total sequence length
+        if self.config.obs == 'state':
+            # Note: hidden_size is kept from config (e.g., 256) to maintain model size. 
+            self.config.seq_len = self.config.obs_shape['state'][0] + self.config.task_emb_len
+        elif self.config.obs == 'rgb':
+            self.config.seq_len = self.config.obs_shape['state'][0] + self.config.obs_shape['rgb'][0] + self.config.task_emb_len
+        else:
+            raise NotImplementedError(f"Unexpected observation type: {self.config.obs}")
+        
         super().__init__()
         # TODO: Accept device arg
         self.inner = TRMInner(self.config).to(torch.device('cuda'))
