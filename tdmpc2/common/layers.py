@@ -5,8 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from common.trm import TRM
-
 
 class SimNorm(nn.Module):
 	"""
@@ -165,6 +163,7 @@ def enc(cfg, out={}):
 	Returns a dictionary of encoders for each observation in the dict.
 	"""
 	if cfg.use_trm_encoder:
+		from common.trm import TRM
 		out['state'] = TRM(cfg).to(torch.device('cuda'))
 	else:
 		if cfg.obs == 'state':
