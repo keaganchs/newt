@@ -26,23 +26,23 @@ MODEL_SIZE = {
 }
 
 TRM_SIZE = {
-	'S':   {'hidden_size': 16, # ~150k parameters
+	'S':   {'hidden_size': 384, # encoder ~1.5M parameters; 2.6M total
 		  	'num_heads': 10,
 			'expansion': 2.0,
 			'H_cycles': 3,
 			'L_cycles': 6,
 			'L_layers': 2,
-			'latent_dim': 256,
+			'latent_dim': 384,
 			'num_enc_layers': 2,},
-	'B':   {'hidden_size': 32,
+	'B':   {'hidden_size': 512,
 		  	'num_heads': 14,
 			'expansion': 4.0,
 			'H_cycles': 2,
 			'L_cycles': 6,
 			'L_layers': 2,
-			'latent_dim': 384,
+			'latent_dim': 512,
 			'num_enc_layers': 2,},
-	'L':   {'hidden_size': 64, 
+	'L':   {'hidden_size': 512, 
 		  	'num_heads': 16,
 			'expansion': 4.0,
 			'H_cycles': 2,
@@ -50,7 +50,7 @@ TRM_SIZE = {
 			'L_layers': 2,
 			'latent_dim': 512,
 			'num_enc_layers': 3,},
-	'XL':  {'hidden_size': 128,
+	'XL':  {'hidden_size': 704,
 			'num_heads': 16,
 			'expansion': 8.0,
 			'H_cycles': 3,
@@ -178,12 +178,12 @@ TASK_SET = {
 		'pygame-coconut-dodge', 'pygame-cartpole-balance', 'pygame-cartpole-swingup', 'pygame-cartpole-balance-sparse', 'pygame-cartpole-swingup-sparse',
 		'pygame-cartpole-tremor', 'pygame-point-maze-var1', 'pygame-point-maze-var2', 'pygame-point-maze-var3',
 		# atari (27 tasks), requires gymnasium<=0.27.1
-		# 'atari-alien', 'atari-assault', 'atari-asterix', 'atari-atlantis', 'atari-bank-heist',
-		# 'atari-battle-zone', 'atari-beamrider', 'atari-boxing', 'atari-chopper-command', 'atari-crazy-climber',
-		# 'atari-double-dunk', 'atari-gopher', 'atari-ice-hockey', 'atari-jamesbond', 'atari-kangaroo',
-		# 'atari-krull', 'atari-ms-pacman', 'atari-name-this-game', 'atari-phoenix', 'atari-pong',
-		# 'atari-road-runner', 'atari-robotank', 'atari-seaquest', 'atari-space-invaders', 'atari-tutankham',
-		# 'atari-upndown', 'atari-yars-revenge',
+		'atari-alien', 'atari-assault', 'atari-asterix', 'atari-atlantis', 'atari-bank-heist',
+		'atari-battle-zone', 'atari-beamrider', 'atari-boxing', 'atari-chopper-command', 'atari-crazy-climber',
+		'atari-double-dunk', 'atari-gopher', 'atari-ice-hockey', 'atari-jamesbond', 'atari-kangaroo',
+		'atari-krull', 'atari-ms-pacman', 'atari-name-this-game', 'atari-phoenix', 'atari-pong',
+		'atari-road-runner', 'atari-robotank', 'atari-seaquest', 'atari-space-invaders', 'atari-tutankham',
+		'atari-upndown', 'atari-yars-revenge',
 	],
 }
 
