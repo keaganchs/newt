@@ -160,6 +160,7 @@ class TRMInner(nn.Module):
 
         # TODO: Accept device arg
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False).to(device="cuda")
+        # TODO: check q_head needs 2 outputs or just 1 for halt logit
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda")
         
         if self.config.task_dim > 0:

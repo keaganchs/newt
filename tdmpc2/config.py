@@ -39,7 +39,7 @@ class Config:
 	prior_coef: float = 10.0								# coefficient for bc prior loss
 	rho: float = 0.5										# temporal weight coefficient for model losses
 	lr: float = 3e-4										# global learning rate
-	enc_lr_scale: float = 0.3								# encoder learning rate scale (wrt global lr); original trm implementation uses 1e-4 
+	enc_lr_scale: float = 0.3								# encoder learning rate scale (wrt global lr); original trm implementation uses 1e-4 for layers and 1e-2 for the embedding layer
 	grad_clip_norm: float = 20.0							# gradient clipping norm
 	tau: float = 0.01										# target value network update rate
 	discount_denom: int = 5									# denominator for discount factor heuristic
