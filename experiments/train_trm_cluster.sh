@@ -6,13 +6,13 @@
 #SBATCH --partition=stud
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=3
-#SBATCH --mem-per-cpu=2000
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=6000
 #SBATCH --time=23:59:00
 #SBATCH --gres=gpu:1
 
 
-# If using Slurm, run this script from the newt/experiments/ directory of the repository!
+# If using Slurm, run this script from the root (.../newt) directory of the repository!
 
 
 # Activate conda environment
@@ -21,16 +21,19 @@ conda activate newt
 
 # Make paths
 cd $SLURM_SUBMIT_DIR
+
 SCRIPT_DIR="$SLURM_SUBMIT_DIR"
-PYTHON_SCRIPT="$SCRIPT_DIR/../tdmpc2/train.py"
+PYTHON_SCRIPT="$SCRIPT_DIR/tdmpc2/train.py"
 
 # Run
 python3 $PYTHON_SCRIPT \
     task="mujoco" \
     use_trm_encoder=True \
+    use_task_embedding=False \
     obs="state" \
     model_size="S" \
     mlp_t=True \
+    halt_max_steps=0 \
     wandb_project="newt_trm" \
     wandb_entity="keagan" \
     wandb_run_name="trm_mlp_s_0" \
