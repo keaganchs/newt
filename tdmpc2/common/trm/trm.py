@@ -16,6 +16,10 @@ from config import Config
 from common.layers import mlp
 from common.trm.trm_layers import trunc_normal_init_, rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear, CastedSparseEmbedding
 
+"""
+Tiny Recursive Model (TRM), copied from the original implementation and modified
+"""
+
 
 IGNORE_LABEL_ID = -100
 
@@ -152,8 +156,9 @@ class TRMInner(nn.Module):
         self.embed_scale = math.sqrt(self.config.hidden_size)
         embed_init_std = 1.0 / self.embed_scale
 
-        self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+        # self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         # TODO: handle continuous inputs properly: currently checks if input is floating point and uses a linear layer
+        # TODO: can this be removed?
         self.embed_continuous = CastedLinear(1, self.config.hidden_size, bias=False)
         with torch.no_grad():
             trunc_normal_init_(self.embed_continuous.weight, std=embed_init_std)
@@ -209,14 +214,15 @@ class TRMInner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
     def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
-        # Token embedding
+        # Observation embedding
         # TODO: update code to handle continuous inputs (add discretization flag, int casting only when enabled; check tokeniztion/vocab size etc.)
         if input.is_floating_point():
             embedding = self.embed_continuous(input.unsqueeze(-1))
         else:
-            embedding = self.embed_tokens(input.to(torch.int32))
+            raise NotImplementedError("TRM currently only supports continuous inputs.")
+            # embedding = self.embed_tokens(input.to(torch.int32))
 
-        # Task embeddings
+        # Task embedding
         if self.config.task_dim > 0:
             task_embedding = self.task_emb(task_embedding)
             
@@ -225,7 +231,8 @@ class TRMInner(nn.Module):
                 task_embedding = F.pad(task_embedding, (0, pad_count))
 
             embedding = torch.cat((task_embedding.view(-1, self.config.task_emb_len, self.config.hidden_size), embedding), dim=-2)
-        # Position embeddings
+        
+        # Position embedding (if learned)
         if self.config.pos_encodings == "learned":
             # scale by 1/sqrt(2) to maintain forward variance
             embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight.to(self.forward_dtype))
@@ -268,6 +275,7 @@ class TRMInner(nn.Module):
         z_H = self.L_level(z_H, z_L, **seq_info)
 
         # LM Outputs
+        # TODO: check implementation for output
         # TODO: add device arg
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
         output = self.lm_head(z_H)[:, self.config.task_emb_len:]
