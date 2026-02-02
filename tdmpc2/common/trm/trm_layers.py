@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.nn.functional import scaled_dot_product_attention
 
 """
-Begin TRM Layers, copied from the original implementation
+TRM Layers, copied from the original implementation and modified
 """
 
 
@@ -96,6 +96,9 @@ class CastedLinear(nn.Module):
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return F.linear(input, self.weight.to(input.dtype), bias=self.bias.to(input.dtype) if self.bias is not None else None)
 
+    def __repr__(self):
+        return f"CastedLinear(in_features={self.weight.shape[1]}, out_features={self.weight.shape[0]}, bias={self.bias is not None})"
+
 
 class CastedEmbedding(nn.Module):
     def __init__(self,
@@ -104,24 +107,31 @@ class CastedEmbedding(nn.Module):
                  init_std: float,
                  cast_to: torch.dtype):
         super().__init__()
+        self.init_std = init_std
         self.cast_to = cast_to
 
         # Truncated LeCun normal init
         self.embedding_weight = nn.Parameter(
-            trunc_normal_init_(torch.empty((num_embeddings, embedding_dim)), std=init_std)
+            trunc_normal_init_(torch.empty((num_embeddings, embedding_dim)), std=self.init_std)
         )
         
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return F.embedding(input, self.embedding_weight.to(self.cast_to))
 
+    def __repr__(self):
+        return f"CastedEmbedding(num_embeddings={self.embedding_weight.shape[0]}, embedding_dim={self.embedding_weight.shape[1]}, init_std={self.init_std}, cast_to={self.cast_to})"
+
 
 class RotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings, base, device=None):
         super().__init__()
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
 
         # RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim))
-        t = torch.arange(max_position_embeddings, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float32, device=device) / self.dim))
+        t = torch.arange(self.max_position_embeddings, dtype=torch.float32, device=device)
         freqs = torch.outer(t, inv_freq)
 
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
@@ -131,6 +141,9 @@ class RotaryEmbedding(nn.Module):
 
     def forward(self):
         return self.cos_cached, self.sin_cached
+
+    def __repr__(self):
+        return f"RotaryEmbedding(dim={self.dim}, max_position_embeddings={self.max_position_embeddings}, base={self.base})"
 
 
 class SwiGLU(nn.Module):
@@ -187,16 +200,25 @@ class Attention(nn.Module):
         attn_output = attn_output.reshape(batch_size, seq_len, self.output_size)  # type: ignore
         return self.o_proj(attn_output)
 	
+    def __repr__(self):
+        return f"Attention(hidden_size={self.hidden_size}, head_dim={self.head_dim}, num_heads={self.num_heads}, num_key_value_heads={self.num_key_value_heads}, causal={self.causal})"
+
 
 class CastedSparseEmbedding(nn.Module):
     def __init__(self, num_embeddings: int, embedding_dim: int, batch_size: int, init_std: float, cast_to: torch.dtype):
         super().__init__()
+        
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        self.batch_size = batch_size
+        self.init_std = init_std
+        
         self.cast_to = cast_to
 
         # Real Weights
         # Truncated LeCun normal init
         self.weights = nn.Buffer(
-            trunc_normal_init_(torch.empty((num_embeddings, embedding_dim)), std=init_std), persistent=True
+            trunc_normal_init_(torch.empty((num_embeddings, embedding_dim)), std=self.init_std), persistent=True
         )
 
         # Local weights and IDs
@@ -222,8 +244,6 @@ class CastedSparseEmbedding(nn.Module):
 
         return self.local_weights[:batch_size].to(self.cast_to)
 
-
-"""
-End TRM Layers
-"""
+    def __repr__(self):
+        return f"CastedSparseEmbedding(num_embeddings={self.num_embeddings}, embedding_dim={self.embedding_dim}, batch_size={self.batch_size}, init_std={self.init_std}, cast_to={self.cast_to})"
 
