@@ -46,7 +46,7 @@ class Config:
 	discount_min: float = 0.95								# minimum discount factor
 	discount_max: float = 0.995								# maximum discount factor
 	buffer_size: int = 1_000_000							# replay buffer capacity
-	use_demos: bool = True									# whether to use demonstration data
+	use_demos: bool = False									# whether to use demonstration data
 	demo_steps: int = 200_000								# number of pretraining steps on demonstration data
 	lr_schedule: Optional[str] = None						# learning rate schedule, one of [None, "warmup"]
 	warmup_steps: int = 5_000								# number of warmup steps for lr schedule
@@ -87,7 +87,7 @@ class Config:
 	mlp_dim: int = 1024										# model mlp width, overridden by model_size
 	
 	latent_dim: int = 256									# model latent state dim, overridden by model_size
-	use_task_embedding: bool = True							# whether to use task conditioning
+	use_task_embedding: bool = False						# whether to use task conditioning
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
@@ -95,11 +95,11 @@ class Config:
 	# logging
 	wandb_project: str = "newt_trm"							# wandb project name
 	wandb_entity: str = "keagan"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = "trm_mlp_s_0"					# wandb run name (defaults to <seed>)
+	wandb_run_name: Optional[str] = "trm_att"				# wandb run name (defaults to <seed>)
 	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
-	multiproc: bool = False									# whether to use multiple GPUs (will use all visible GPUs)
+	multiproc: bool = True									# whether to use multiple GPUs (will use all visible GPUs)
 	compile: bool = True									# whether to use torch.compile for model compilation (faster)
 	render_size: int = 224									# render size for rgb observations
 	save_video: bool = False								# whether to save evaluation videos
@@ -107,36 +107,27 @@ class Config:
 	data_dir: str = "<path>/<to>/data"						# directory for demonstrations
 	seed: int = 1											# random seed
 
-	# TRM config
-	# batch_size: defined above
+	# TRM config, most options are overridden by `model_size` or `trm_size` if specified
 	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
-	seq_len: int = 256  									# Currently ignored. if using TRM encoder, seq_len = enc_dim to match dimensions TODO: assertion
-    
-	task_emb_len: Optional[int] = None						# Set during runtime. Length of task identifier embeddings, calculated during runtime as len(task_embeddings)
-    # task_emb_ndim: defined as task_dim above
-	# num_task_identifiers: int = 220						# Defined as num_tasks below 
-	vocab_size: int = 32768									# CLIP vocab size is 32,768
-
+	mlp_t: bool = False 									# use mlp on L instead of transformer. The MLP mixer scales with seq_len^2, while the attention verion scales with hidden_size^2
+	vocab_size: int = 200									# Should be set to num_tasks
 	H_cycles: int = 2
 	L_cycles: int = 6
 	L_layers: int = 2
 
 	# Transformer config
-	hidden_size: int = 256									# Transformer hidden size, usually set to latent_dim
+	hidden_size: int = 256									# Size for z and y in the TRM, normally set to latent_dim
 	expansion: float = 4.0
-	num_heads: int = 16
+	num_heads: int = 8										# Originally min(2, hidden_size // 64)
 	pos_encodings: str = "rope"								# "rope" or "learned"
-
 	rms_norm_eps: float = 1e-5
 	rope_theta: float = 10000.0
 	
 	# Halting Q-learning config
-	halt_max_steps: int = 16 								# For Adaptive Computational Time (ACT). Note that during eval max steps is always used
+	halt_max_steps: int = 0 								# For Adaptive Computational Time (ACT). Note that during eval max steps is always used
 	halt_exploration_prob: float = 0.0						# For epsilon-greedy exploration
 
-	forward_dtype: str = "bfloat16"
-
-	mlp_t: bool = True # use mlp on L instead of transformer
+	forward_dtype: str = "bfloat16"							# bfloat16 is only supported on RTX 3000 series GPUs and newer
 
 	# convenience (filled at runtime)
 	work_dir: Optional[str] = None
@@ -160,6 +151,8 @@ class Config:
 	world_size: int = 1
 	port: Optional[str] = None
 	child_env: bool = False
+	task_emb_len: Optional[int] = None						# len(task_embeddings)
+	seq_len: Optional[int] = None  							# sequence length for TRM: obs_state + obs_rgb + task_emb_len
 
 	get = lambda self, val, default=None: getattr(self, val, default)
 
