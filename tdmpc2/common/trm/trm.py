@@ -40,37 +40,6 @@ class TRMCarry:
     current_data: Dict[str, torch.Tensor]
 
 
-class TRMConfig(BaseModel):
-    batch_size: int
-    seq_len: int
-    
-    task_emb_len: int = 16 # if non-zero, length of task embedding
-    task_dim: int = 0 # previously task_emb_ndim: int = 0 # Dim of task embedding space. Set to 0 to disable
-    # num_task_identifiers: int # Number of unique tasks
-    vocab_size: int # Number of tokens in the model's vocabulary 
-
-    H_cycles: int
-    L_cycles: int
-    L_layers: int
-
-    # Transformer config
-    hidden_size: int
-    expansion: float
-    num_heads: int
-    pos_encodings: str
-
-    rms_norm_eps: float = 1e-5
-    rope_theta: float = 10000.0
-    
-    # Halting Q-learning config
-    halt_max_steps: int
-    halt_exploration_prob: float
-
-    forward_dtype: str = "bfloat16"
-
-    mlp_t: bool = False # use mlp on L instead of transformer
-
-
 class TRMBlock(nn.Module):
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -157,8 +126,6 @@ class TRMInner(nn.Module):
         embed_init_std = 1.0 / self.embed_scale
 
         # self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        # TODO: handle continuous inputs properly: currently checks if input is floating point and uses a linear layer
-        # TODO: can this be removed?
         self.embed_continuous = CastedLinear(1, self.config.hidden_size, bias=False)
         with torch.no_grad():
             trunc_normal_init_(self.embed_continuous.weight, std=embed_init_std)
@@ -289,7 +256,7 @@ class TRM(nn.Module):
     def __init__(self, config: Config):
         self.config = config
 
-        # Calculate task embedding sequence length (number of tokens needed to represent task_dim)
+        # Calculate length of task embedding chunks 
         if self.config.task_dim > 0:
              self.config.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) # ceil div
         else:
@@ -297,7 +264,6 @@ class TRM(nn.Module):
 
         # Calculate total sequence length
         if self.config.obs == 'state':
-            # Note: hidden_size is kept from config (e.g., 256) to maintain model size. 
             self.config.seq_len = self.config.obs_shape['state'][0] + self.config.task_emb_len
         elif self.config.obs == 'rgb':
             self.config.seq_len = self.config.obs_shape['state'][0] + self.config.obs_shape['rgb'][0] + self.config.task_emb_len
