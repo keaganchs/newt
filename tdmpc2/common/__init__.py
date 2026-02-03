@@ -5,7 +5,7 @@ import torch
 
 
 MODEL_SIZE = {
-	'S':   {'enc_dim': 128,
+	'S':   {'enc_dim': 128, # encoder ~67k parameters; 1.3M total
 		  	'mlp_dim': 256,
 		  	'latent_dim': 384,
 		  	'num_enc_layers': 2,
@@ -26,31 +26,31 @@ MODEL_SIZE = {
 }
 
 TRM_SIZE = {
-	'S':   {'hidden_size': 384, # encoder ~1.5M parameters; 2.6M total
-		  	'num_heads': 10,
-			'expansion': 2.0,
-			'H_cycles': 3,
+	'S':   {'hidden_size': 128, # 32+att=>~39k parameters; 128+att=>450k parameters 
+		  	'num_heads': 2,
+			'expansion': 4.0,
+			'H_cycles': 2,
 			'L_cycles': 6,
 			'L_layers': 2,
 			'latent_dim': 384,
 			'num_enc_layers': 2,},
-	'B':   {'hidden_size': 512,
-		  	'num_heads': 14,
+	'B':   {'hidden_size': 256, # 256+att=>~1.6M parameters
+		  	'num_heads': 4,
 			'expansion': 4.0,
 			'H_cycles': 2,
 			'L_cycles': 6,
 			'L_layers': 2,
 			'latent_dim': 512,
 			'num_enc_layers': 2,},
-	'L':   {'hidden_size': 512, 
-		  	'num_heads': 16,
+	'L':   {'hidden_size': 512, # 512+att=>~6.5M parameters
+		  	'num_heads': 8,
 			'expansion': 4.0,
 			'H_cycles': 2,
 			'L_cycles': 10,
 			'L_layers': 2,
 			'latent_dim': 512,
 			'num_enc_layers': 3,},
-	'XL':  {'hidden_size': 704,
+	'XL':  {'hidden_size': 704, # 704+att=>~12.2M parameters
 			'num_heads': 16,
 			'expansion': 8.0,
 			'H_cycles': 3,
