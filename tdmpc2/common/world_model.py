@@ -165,7 +165,8 @@ class WorldModel(nn.Module):
 			init_carry=self._encoder['state'].initial_carry(z)
 			out = self._encoder['state'](init_carry, z)[1]['logits']
 
-			# TODO: Confirm taking the mean of the logits is the right approach here
+			# TODO: Might be worth testing alternative aggregation strategies, e.g. max pooling or using a [CLS] token
+			# Global average pooling. The interprets the global world model as the average across the batch dimension of all contextualized feature representations
 			return out.mean(1).view(*batch_shape, -1)
 		# Default MLP encoder
 		else:
