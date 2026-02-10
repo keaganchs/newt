@@ -101,6 +101,7 @@ class TRMReasoningModule(nn.Module):
         super().__init__()
         self.layers = torch.nn.ModuleList(layers)
 
+    @torch.compile()
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
         hidden_states = hidden_states + input_injection
         for layer in self.layers:
@@ -205,7 +206,8 @@ class TRMInner(nn.Module):
             embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight.to(self.forward_dtype))
 
         # Scale
-        return self.embed_scale * embedding
+        out = (embedding * self.embed_scale).to(self.forward_dtype)
+        return out
 
     def empty_carry(self, batch_size: int, device: Optional[torch.device] = None) -> TRMInnerCarry:
         return TRMInnerCarry(
@@ -233,12 +235,14 @@ class TRMInner(nn.Module):
         # H_cycles-1 without grad
         with torch.no_grad():
             for _ in range(self.config.H_cycles-1): # H step
+                z_H_inject = z_H + input_embeddings  # Precompute once per H-cycle
                 for _ in range(self.config.L_cycles): # L step
-                    z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+                    z_L = self.L_level(z_L, z_H_inject, **seq_info)
                 z_H = self.L_level(z_H, z_L, **seq_info)
         # 1 with grad
+        z_H_inject = z_H + input_embeddings
         for _ in range(self.config.L_cycles): # L step
-            z_L = self.L_level(z_L, z_H + input_embeddings, **seq_info)
+            z_L = self.L_level(z_L, z_H_inject, **seq_info)
         z_H = self.L_level(z_H, z_L, **seq_info)
 
         # LM Outputs
