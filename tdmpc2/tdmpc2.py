@@ -451,4 +451,19 @@ class TDMPC2(torch.nn.Module):
 				"lr": self.scheduler.current_lr(0, 1),
 				"lr_pi": self.scheduler.current_lr(1, 0),
 			})
-		return {k: v.cpu().item() if isinstance(v, torch.Tensor) and v.numel() == 1 else v for k, v in info.items()}
+			
+		# Batch GPU to CPU transfer for info
+		tensor_keys = []
+		tensor_vals = []
+		result = {}
+		for k, v in info.items():
+			if isinstance(v, torch.Tensor) and v.numel() == 1:
+				tensor_keys.append(k)
+				tensor_vals.append(v.detach())
+			else:
+				result[k] = v
+		if tensor_vals:
+			scalars = torch.stack([v.reshape(()) for v in tensor_vals]).cpu()
+			for i, k in enumerate(tensor_keys):
+				result[k] = scalars[i].item()
+		return result
