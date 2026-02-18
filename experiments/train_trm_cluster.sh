@@ -27,14 +27,16 @@ PYTHON_SCRIPT="$SCRIPT_DIR/tdmpc2/train.py"
 
 # Run
 python3 $PYTHON_SCRIPT \
-    task="mujoco" \
-    use_trm_encoder=True \
-    use_task_embedding=False \
+    task="dmcontrol" \
+    num_envs=21 \
+    use_trm_encoder=False \
+    use_task_embedding=True \
     obs="state" \
     model_size="S" \
     mlp_t=True \
     halt_max_steps=0 \
+    halt_exploration_prob=0 \
     wandb_project="newt_trm" \
     wandb_entity="keagan" \
-    wandb_run_name="trm_mlp_s_0" \
+    wandb_run_name="dmc_newt_s" \
     enable_wandb=True \
