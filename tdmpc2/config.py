@@ -20,9 +20,9 @@ class Config:
 	"""
 
 	# environment
-	task: str = "mujoco"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
+	task: str = "dmcontrol"									# "soup" for multitask, see tdmpc2/common/__init__.py for task list
 	obs: str = "state"										# observation type, one of ["state", "rgb"]
-	num_envs: int = 6										# number of parallel environments, overridden if task is "soup"
+	num_envs: int = 21										# number of parallel environments, overridden if task is "soup"
 	env_mode: str = "async"									# environment mode, one of ["async", "sync"]
 
 	# evaluation
@@ -87,7 +87,7 @@ class Config:
 	mlp_dim: int = 1024										# model mlp width, overridden by model_size
 	
 	latent_dim: int = 256									# model latent state dim, overridden by model_size
-	use_task_embedding: bool = False						# whether to use task conditioning
+	use_task_embedding: bool = True							# whether to use task conditioning
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
