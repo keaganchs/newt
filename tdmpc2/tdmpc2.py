@@ -451,19 +451,20 @@ class TDMPC2(torch.nn.Module):
 				"lr": self.scheduler.current_lr(0, 1),
 				"lr_pi": self.scheduler.current_lr(1, 0),
 			})
-			
-		# Batch GPU to CPU transfer for info
+		
+		# Batch GPU to CPU transfer
 		tensor_keys = []
 		tensor_vals = []
 		result = {}
 		for k, v in info.items():
-			if isinstance(v, torch.Tensor) and v.numel() == 1:
+			if isinstance(v, torch.Tensor):
 				tensor_keys.append(k)
-				tensor_vals.append(v.detach())
+				# Reduce multi-element tensors (e.g. pi_scaled_entropy) to scalar on GPU
+				tensor_vals.append(v.detach().mean())
 			else:
 				result[k] = v
 		if tensor_vals:
-			scalars = torch.stack([v.reshape(()) for v in tensor_vals]).cpu()
+			scalars = torch.stack(tensor_vals).cpu()
 			for i, k in enumerate(tensor_keys):
 				result[k] = scalars[i].item()
 		return result
