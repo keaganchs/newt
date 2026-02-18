@@ -36,9 +36,9 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.action_dims)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=nn.Mish())
-		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], max(cfg.num_bins, 1), act=nn.Mish())
-		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, [], 2*cfg.action_dim, act=nn.Mish())
+		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=layers.SimNorm(cfg))
+		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], max(cfg.num_bins, 1), act=None)
+		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, [], 2*cfg.action_dim, act=None)
 		self._Qs = layers.QOnlineTargetEnsemble(cfg)
 		self.apply(init.weight_init)
 		init.zero_(self._reward[-1].weight)
