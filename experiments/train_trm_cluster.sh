@@ -3,10 +3,10 @@
 #SBATCH --job-name=newt_trm
 #SBATCH --output=log/out_and_err_%j.txt
 #SBATCH --error=log/out_and_err_%j.txt
-#SBATCH --partition=stud
+#SBATCH --partition=amd3
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=3
 #SBATCH --mem-per-cpu=6000
 #SBATCH --time=23:59:00
 #SBATCH --gres=gpu:1
@@ -40,3 +40,5 @@ python3 $PYTHON_SCRIPT \
     wandb_entity="keagan" \
     wandb_run_name="dmc_newt_s" \
     enable_wandb=True \
+    H_cycles=1 \
+    L_cycles=1 \
