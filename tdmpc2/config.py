@@ -116,9 +116,9 @@ class Config:
 	L_layers: int = 2
 
 	# Transformer config
-	hidden_size: int = 256									# Size for z and y in the TRM, normally set to latent_dim
+	hidden_size: int = 640									# Size for z and y in the TRM, normally set to latent_dim
 	expansion: float = 4.0
-	num_heads: int = 8										# Originally min(2, hidden_size // 64)
+	num_heads: int = 10										# Originally min(2, hidden_size // 64)
 	pos_encodings: str = "rope"								# "rope" or "learned"
 	rms_norm_eps: float = 1e-5
 	rope_theta: float = 10000.0
@@ -127,7 +127,7 @@ class Config:
 	halt_max_steps: int = 0 								# For Adaptive Computational Time (ACT). Note that during eval max steps is always used
 	halt_exploration_prob: float = 0.0						# For epsilon-greedy exploration
 
-	forward_dtype: str = "bfloat16"							# bfloat16 is only supported on RTX 3000 series GPUs and newer
+	forward_dtype: str = "float32"							# bfloat16 is only supported on RTX 3000 series GPUs and newer
 
 	# convenience (filled at runtime)
 	work_dir: Optional[str] = None
