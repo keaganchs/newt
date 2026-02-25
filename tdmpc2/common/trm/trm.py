@@ -157,7 +157,6 @@ class TRMInner(nn.Module):
                     print(f"Failed to initialize TRM task embeddings from config: {e}")
 
         # LM Blocks
-        # TODO: add device arg
         if self.config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,
                                               max_position_embeddings=self.config.seq_len,
@@ -175,6 +174,9 @@ class TRMInner(nn.Module):
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
 
+        # [CLS] token: learnable aggregation vector prepended at position 0
+        self.cls_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=embed_init_std).to(device="cuda"), persistent=True)
+
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
         with torch.no_grad():
@@ -182,23 +184,24 @@ class TRMInner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
     def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
-        # Observation embedding
-        # TODO: update code to handle continuous inputs (add discretization flag, int casting only when enabled; check tokeniztion/vocab size etc.)
+        # Concatenate task embedding to observation as extra input dimensions
+        # Each dimension (task or obs) becomes its own token
+        if self.config.task_dim > 0:
+            task_emb_vec = self.task_emb(task_embedding).to(input.dtype)  # (B, task_dim)
+            # Task dimensions first so they occupy positions [0, task_emb_len) in the sequence
+            input = torch.cat([task_emb_vec, input], dim=-1)  # (B, task_dim + obs_dim)
+
+        # Embed each scalar dimension as a token: (B, seq_len-1) -> (B, seq_len-1, hidden_size)
         if input.is_floating_point():
             embedding = self.embed_continuous(input.unsqueeze(-1))
         else:
             raise NotImplementedError("TRM currently only supports continuous inputs.")
             # embedding = self.embed_tokens(input.to(torch.int32))
 
-        # Task embedding
-        if self.config.task_dim > 0:
-            task_embedding = self.task_emb(task_embedding)
-            
-            pad_count = self.config.task_emb_len * self.config.hidden_size - task_embedding.shape[-1]
-            if pad_count > 0:
-                task_embedding = F.pad(task_embedding, (0, pad_count))
-
-            embedding = torch.cat((task_embedding.view(-1, self.config.task_emb_len, self.config.hidden_size), embedding), dim=-2)
+        # Prepend [CLS] token at position 0: (B, seq_len-1, D) -> (B, seq_len, D)
+        batch_size = embedding.shape[0]
+        cls_token = self.cls_init.unsqueeze(0).expand(batch_size, 1, -1)  # (B, 1, hidden_size)
+        embedding = torch.cat([cls_token, embedding], dim=-2)
         
         # Position embedding (if learned)
         if self.config.pos_encodings == "learned":
@@ -246,11 +249,11 @@ class TRMInner(nn.Module):
         z_H = self.L_level(z_H, z_L, **seq_info)
 
         # LM Outputs
-        # TODO: check implementation for output
         # TODO: add device arg
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
-        output = self.lm_head(z_H)[:, self.config.task_emb_len:]
-        q_logits = self.q_head(z_H[:, 0]).to(torch.float32) # Q-head; uses the first task_emb position
+        # [CLS] token at position 0 aggregates sequence information
+        output = self.lm_head(z_H[:, 0])  # (B, latent_dim)
+        q_logits = self.q_head(z_H[:, 0]).to(torch.float32) # Q-head; also reads from [CLS]
         return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
 
 
@@ -261,16 +264,18 @@ class TRM(nn.Module):
         self.config = config
 
         # Calculate length of task embedding chunks 
-        if self.config.task_dim > 0:
-             self.config.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) # ceil div
-        else:
-             self.config.task_emb_len = 0
+        # if self.config.task_dim > 0:
+        #      self.config.task_emb_len = -(self.config.task_dim // -self.config.hidden_size) # ceil div
+        # else:
+        #      self.config.task_emb_len = 0
 
-        # Calculate total sequence length
+        self.config.task_emb_len = self.config.task_dim if self.config.task_dim > 0 else 0
+
+        # Calculate total sequence length (+1 for [CLS] token at position 0)
         if self.config.obs == 'state':
-            self.config.seq_len = self.config.obs_shape['state'][0] + self.config.task_emb_len
+            self.config.seq_len = 1 + self.config.obs_shape['state'][0] + self.config.task_emb_len
         elif self.config.obs == 'rgb':
-            self.config.seq_len = self.config.obs_shape['state'][0] + self.config.obs_shape['rgb'][0] + self.config.task_emb_len
+            self.config.seq_len = 1 + self.config.obs_shape['state'][0] + self.config.obs_shape['rgb'][0] + self.config.task_emb_len
         else:
             raise NotImplementedError(f"Unexpected observation type: {self.config.obs}")
         
