@@ -125,7 +125,6 @@ class WorldModel(nn.Module):
 		Keagan: added option to use a Tiny Recursion Model (TRM)
 		"""
 		if self.cfg.use_trm_encoder:
-			# Flatten time and batch dimensions for TRM encoder: [T, B, D] -> [T*B, D]
 			if self.cfg.obs == 'state':
 				_obs = obs
 			elif self.cfg.obs == 'rgb':
@@ -134,6 +133,7 @@ class WorldModel(nn.Module):
 			else:
 				raise ValueError(f"Unsupported observation type: {self.cfg.obs}")
 
+			# Flatten observations to [B, obs_dim]
 			batch_shape = _obs.shape[:-1]
 			_obs_flat = _obs.view(-1, _obs.shape[-1])
 			
@@ -144,12 +144,9 @@ class WorldModel(nn.Module):
 			
 			# Broadcast task to match obs batch dimensions
 			if task.ndim < len(batch_shape):
-				# Expand task dims to match obs dims ([B] -> [T, B])
-				# TODO: confirm the task embedding corresponds to the last batch dim
 				view_shape = [1] * (len(batch_shape) - task.ndim) + list(task.shape)
 				task = task.view(*view_shape).expand(batch_shape)
 			elif task.shape != batch_shape:
-				# TODO: Assuming dim 0 is batch/env dim, double-check
 				if task.shape[0] > batch_shape[0]:
 					task = task[:batch_shape[0]] 
 				# Try direct broadcast/expand
@@ -165,9 +162,8 @@ class WorldModel(nn.Module):
 			init_carry=self._encoder['state'].initial_carry(z)
 			out = self._encoder['state'](init_carry, z)[1]['logits']
 
-			# TODO: Might be worth testing alternative aggregation strategies, e.g. max pooling or using a [CLS] token
-			# Global average pooling. The interprets the global world model as the average across the batch dimension of all contextualized feature representations
-			return out.mean(1).view(*batch_shape, -1)
+			# TRM returns (B, latent_dim) from the [CLS] token
+			return out.view(*batch_shape, -1)
 		# Default MLP encoder
 		else:
 			# State obs
