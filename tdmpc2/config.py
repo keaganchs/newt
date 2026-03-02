@@ -109,11 +109,12 @@ class Config:
 
 	# TRM config, most options are overridden by `model_size` or `trm_size` if specified
 	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
-	mlp_t: bool = False 									# use mlp on L instead of transformer. The MLP mixer scales with seq_len^2, while the attention verion scales with hidden_size^2
+	mlp_t: bool = False 									# use mlp on L instead of transformer
 	vocab_size: int = 200									# Should be set to num_tasks
 	H_cycles: int = 2
 	L_cycles: int = 6
 	L_layers: int = 2
+	num_state_obs_per_token: int = 16						# Number of values in the state observation vector to place in each token. Affects the sequence length
 
 	# Transformer config
 	hidden_size: int = 256									# Size for z and y in the TRM, normally set to latent_dim
@@ -151,7 +152,9 @@ class Config:
 	world_size: int = 1
 	port: Optional[str] = None
 	child_env: bool = False
-	task_emb_len: Optional[int] = None						# len(task_embeddings)
+	num_task_tokens: Optional[int] = None	
+	num_state_tokens: Optional[int] = None
+	num_rgb_tokens: Optional[int] = None					
 	seq_len: Optional[int] = None  							# sequence length for TRM: obs_state + obs_rgb + task_emb_len
 
 	get = lambda self, val, default=None: getattr(self, val, default)
