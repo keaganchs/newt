@@ -128,9 +128,9 @@ class TRMInner(nn.Module):
 
         # TODO: add option to embed task (and rgb?) tokens when hidden_size != 512
         # self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        self.embed_continuous = CastedLinear(1, self.config.hidden_size, bias=False)
+        self.embed_state_obs = CastedLinear(self.config.num_state_obs_per_token, self.config.hidden_size, bias=False)
         with torch.no_grad():
-            trunc_normal_init_(self.embed_continuous.weight, std=embed_init_std)
+            trunc_normal_init_(self.embed_state_obs.weight, std=embed_init_std)
 
         # TODO: Accept device arg
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False).to(device="cuda")
@@ -177,6 +177,9 @@ class TRMInner(nn.Module):
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
 
+        # [CLS] token: learnable aggrevation token prepended to position 0
+        self.cls_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=embed_init_std).to(device="cuda"), persistent=True)
+
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
         with torch.no_grad():
@@ -186,21 +189,28 @@ class TRMInner(nn.Module):
     def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
         # Observation embedding
         if input.is_floating_point():
-            embedding = self.embed_continuous(input.unsqueeze(-1))
+            embedding = self.embed_state_obs(input.unsqueeze(-1))
         else:
             raise NotImplementedError("TRM currently only supports continuous inputs.")
             # embedding = self.embed_tokens(input.to(torch.int32))
 
         # Task embedding
         if self.config.task_dim > 0:
-            task_embedding = self.task_emb(task_embedding)
-            
-            pad_count = self.config.num_task_tokens * self.config.hidden_size - task_embedding.shape[-1]
-            if pad_count > 0:
-                task_embedding = F.pad(task_embedding, (0, pad_count))
-
+            task_embedding = self.task_emb(task_embedding).to(input.dtype) # (batch_size * horizon, task_dim)
             embedding = torch.cat((task_embedding.view(-1, self.config.num_task_tokens, self.config.hidden_size), embedding), dim=-2)
         
+        # RGB embedding
+        if self.config.obs == 'rgb':
+            raise NotImplementedError("RGB Observations are not yet implemented with the TRM architecture.")
+            # rgb_embedding = self.embed_rgb(input['rgb'].to(torch.int32))
+            # embedding = torch.cat((embedding, rgb_embedding), dim=-2)
+
+        # Prepend [CLS] token at position 0: (batch_size, seq_len-1, hidden_size) -> (batch_size, seq_len, hidden_size)
+        cls_token = self.cls_init.unsqueeze(0).expand(embedding.shape[0], 1, -1)
+        embedding = torch.cat([cls_token, embedding], dim=-2)
+
+        # TODO
+
         # Position embedding (if learned)
         if self.config.pos_encodings == "learned":
             # scale by 1/sqrt(2) to maintain forward variance
@@ -270,24 +280,21 @@ class TRM(nn.Module):
 
         # Calculate obs patch sizes. One token will share a number of observations (e.g. 16) to reduce sequence length
         if self.config.num_state_obs_per_token > 1:
-            
-            obs_ = -(self.config.hidden_size // -self.config.num_state_obs_per_token)
-            self.config.num_state_tokens = self.config.obs_shape['state'][0]
+            self.config.num_state_tokens = -((self.config.obs_shape['state'][0] * self.config.num_state_obs_per_token) // self.config.hidden_size) # ceil div
         else: 
             # Project each value in the observation vector to its own token
-            num_state_obs_tokens = self.config.obs_shape['state'][0]
+            self.config.num_state_tokens = self.config.obs_shape['state'][0]
 
         if self.config.obs == 'rgb':
             raise NotImplementedError("RGB Observations are not yet implemented with the TRM architecture.")
             # TODO: check vision encoder token size(s). Just 1 512-dim token?
-            num_rgb_obs_tokens = -(self.config.obs_shape['rgb'][0] // -self.config.hidden_size)
-            
+            self.config.num_rgb_tokens = -(self.config.obs_shape['rgb'][0] // -self.config.hidden_size)
 
         # Calculate total sequence length
         if self.config.obs == 'state':
-            self.config.seq_len = 1 + (num_state_obs_tokens) + (self.config.num_task_tokens)
+            self.config.seq_len = 1 + self.config.num_state_tokens + self.config.num_task_tokens # +1 for the [CLS] token at position 0
         elif self.config.obs == 'rgb':
-            self.config.seq_len = self.config.obs_shape['state'][0] + self.config.obs_shape['rgb'][0] + self.config.num_task_tokens
+            self.config.seq_len = 1 + self.config.num_state_tokens + self.config.num_task_tokens + self.config.num_rgb_tokens # TODO: rgb may disable state observations. This is not ideal for VLA-type tasks
         else:
             raise NotImplementedError(f"Unexpected observation type: {self.config.obs}")
         
