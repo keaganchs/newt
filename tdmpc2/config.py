@@ -154,7 +154,8 @@ class Config:
 	child_env: bool = False
 	num_task_tokens: Optional[int] = None	
 	num_state_tokens: Optional[int] = None
-	num_rgb_tokens: Optional[int] = None					
+	num_rgb_tokens: Optional[int] = None
+	obs_pad_len: Optional[int] = None 							# Number of zeros needed to pad the state observation when projecting to tokens					
 	seq_len: Optional[int] = None  							# sequence length for TRM: obs_state + obs_rgb + task_emb_len
 
 	get = lambda self, val, default=None: getattr(self, val, default)
