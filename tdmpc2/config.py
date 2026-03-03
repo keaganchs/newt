@@ -117,7 +117,7 @@ class Config:
 	num_state_obs_per_token: int = 16						# Number of values in the state observation vector to place in each token. Affects the sequence length
 
 	# Transformer config
-	hidden_size: int = 256									# Size for z and y in the TRM, normally set to latent_dim
+	hidden_size: int = 512									# Size for z and y in the TRM, normally set to latent_dim
 	expansion: float = 4.0
 	num_heads: int = 8										# Originally min(2, hidden_size // 64)
 	pos_encodings: str = "rope"								# "rope" or "learned"

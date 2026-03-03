@@ -133,37 +133,33 @@ class TRMInner(nn.Module):
             trunc_normal_init_(self.embed_state_obs.weight, std=embed_init_std)
 
         # Task embedding projection: handles task_dim != hidden_size
-        # If task_dim == hidden_size, this is an identity-like projection (initialized near identity)
-        # If task_dim < hidden_size, projects up; if task_dim > hidden_size, chunks into num_task_tokens
+        # If task_dim == hidden_size: use the CLIP token directly as 1 token (no projection)
+        # If task_dim < hidden_size: project up to hidden_size -> 1 token
+        # If task_dim > hidden_size: project to num_task_tokens * hidden_size -> multiple tokens
         if self.config.task_dim > 0 and self.config.task_dim != self.config.hidden_size:
             if self.config.task_dim < self.config.hidden_size:
                 # Project up: (task_dim,) -> (hidden_size,) = 1 token
                 self.task_proj = CastedLinear(self.config.task_dim, self.config.hidden_size, bias=False).to(device="cuda")
-                with torch.no_grad():
-                    trunc_normal_init_(self.task_proj.weight, std=embed_init_std)
-            # else: task_dim > hidden_size, chunked into num_task_tokens in _input_embeddings (no projection needed)
+            else:
+                # Project to multiple tokens: (task_dim,) -> (num_task_tokens * hidden_size,)
+                self.task_proj = CastedLinear(self.config.task_dim, self.config.num_task_tokens * self.config.hidden_size, bias=False).to(device="cuda")
+            with torch.no_grad():
+                trunc_normal_init_(self.task_proj.weight, std=embed_init_std)
 
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False).to(device="cuda")
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda") # TODO: check q_head needs 2 outputs or just 1 for halt logit
         
+        # Task embedding: learnable token initialized from CLIP embeddings (if available)
+        self.task_emb_init: torch.Tensor = None
+
         if self.config.task_dim > 0:
             num_tasks = len(self.config.task_embeddings) if self.config.task_embeddings is not None else 1
-            # Newt trains on a flattened batch of sequences with shape (batch_size * horizon)
-            # TODO: confirm batch_size * horizon
-            effective_batch_size = self.config.batch_size * self.config.horizon
-            self.task_emb = CastedSparseEmbedding(num_tasks, self.config.task_dim,
-                                                    batch_size=effective_batch_size, init_std=0, cast_to=self.forward_dtype).to(device="cuda")
             
             # Initialize with task_embeddings from config if available
             if self.config.task_embeddings is not None:
-                try:
-                    pretrained_weights = torch.tensor(self.config.task_embeddings, dtype=torch.float32)
-                    if pretrained_weights.shape == self.task_emb.weights.shape:
-                        with torch.no_grad():
-                            self.task_emb.weights.copy_(pretrained_weights)
-                            print(f"Initialized TRM task embeddings from config with shape {pretrained_weights.shape}")
-                except Exception as e:
-                    print(f"Failed to initialize TRM task embeddings from config: {e}")
+                self.task_emb_init = torch.tensor(self.config.task_embeddings).to(device="cuda", dtype=self.forward_dtype)
+            else: # Default to truncated normal init
+                self.task_emb_init = trunc_normal_init_(torch.empty((num_tasks, self.config.task_dim), dtype=self.forward_dtype), std=embed_init_std).to(device="cuda")
 
         # LM Blocks
         if self.config.pos_encodings == "rope":
@@ -192,6 +188,7 @@ class TRMInner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
     def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
+        """Process input tesnors (x) into tokens, which are then summed with the hidden states"""
         batch_size = input.shape[0]
 
         # State observation patching
@@ -209,21 +206,22 @@ class TRMInner(nn.Module):
         obs_embedding = self.embed_state_obs(obs_patches)
 
         # Task embedding
-        tokens = [obs_embedding]  # will prepend task tokens before obs
+        # task_embedding is an integer task index; look up the precomputed CLIP embedding and convert to token(s)
+        tokens = [obs_embedding]  # list of (batch_size, num_tokens_i, hidden_size)
         if self.config.task_dim > 0:
-            task_vec = self.task_emb(task_embedding).to(input.dtype)  # (batch_size, task_dim)
+            # Look up precomputed CLIP embeddings by task index
+            task_vec = self.task_emb_init[task_embedding.long()]  # (batch_size, task_dim)
+
             if self.config.task_dim == self.config.hidden_size:
-                # Exact match: reshape to 1 token directly
+                # Exact match: use the CLIP token directly as a single token
                 task_tokens = task_vec.unsqueeze(1)  # (batch_size, 1, hidden_size)
             elif self.config.task_dim < self.config.hidden_size:
-                # Project up to hidden_size: 1 token
+                # Project up: (batch_size, task_dim) -> (batch_size, hidden_size) = 1 token
                 task_tokens = self.task_proj(task_vec).unsqueeze(1)  # (batch_size, 1, hidden_size)
             else:
-                # task_dim > hidden_size: chunk into num_task_tokens, zero-pad the last chunk if needed
-                pad_total = self.config.num_task_tokens * self.config.hidden_size - self.config.task_dim
-                if pad_total > 0:
-                    task_vec = F.pad(task_vec, (0, pad_total))
-                task_tokens = task_vec.view(batch_size, self.config.num_task_tokens, self.config.hidden_size)
+                # Project to multiple tokens: (batch_size, task_dim) -> (batch_size, num_task_tokens * hidden_size)
+                task_tokens = self.task_proj(task_vec).view(batch_size, self.config.num_task_tokens, self.config.hidden_size)
+
             tokens.insert(0, task_tokens)  # task tokens before obs tokens
 
         # RGB embedding
@@ -285,7 +283,7 @@ class TRMInner(nn.Module):
         # LM Outputs
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
         # [CLS] token at position 0
-        output = self.lm_head(z_H[:, 0])  # (batch_size, latent_dim)
+        output = self.lm_head(z_H[:, 0]).to(torch.float32)  # (batch_size, latent_dim)
         q_logits = self.q_head(z_H[:, 0]).to(torch.float32)  # (batch_size, 2)
         return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
 

@@ -26,38 +26,42 @@ MODEL_SIZE = {
 }
 
 TRM_SIZE = {
-	'S':   {'hidden_size': 128, # 32+att=>~39k parameters; 128+att=>450k parameters 
-		  	'num_heads': 2,
+	'S':   {'hidden_size': 512, # 32+att=>~39k parameters; 128+att=>450k parameters 
+		  	'num_heads': 8,
 			'expansion': 4.0,
 			'H_cycles': 2,
 			'L_cycles': 6,
 			'L_layers': 2,
 			'latent_dim': 384,
-			'num_enc_layers': 2,},
-	'B':   {'hidden_size': 256, # 256+att=>~1.6M parameters
-		  	'num_heads': 4,
-			'expansion': 4.0,
-			'H_cycles': 2,
-			'L_cycles': 6,
-			'L_layers': 2,
-			'latent_dim': 512,
-			'num_enc_layers': 2,},
-	'L':   {'hidden_size': 512, # 512+att=>~6.5M parameters
+			'num_enc_layers': 2,
+			'num_state_obs_per_token': 16},
+	'B':   {'hidden_size': 512, # 256+att=>~1.6M parameters
 		  	'num_heads': 8,
 			'expansion': 4.0,
 			'H_cycles': 2,
-			'L_cycles': 10,
+			'L_cycles': 8,
 			'L_layers': 2,
 			'latent_dim': 512,
-			'num_enc_layers': 3,},
-	'XL':  {'hidden_size': 704, # 704+att=>~12.2M parameters
+			'num_enc_layers': 2,
+			'num_state_obs_per_token': 16},
+	'L':   {'hidden_size': 512, # 512+att=>~6.5M parameters
+		  	'num_heads': 8,
+			'expansion': 4.0,
+			'H_cycles': 3,
+			'L_cycles': 6,
+			'L_layers': 3,
+			'latent_dim': 512,
+			'num_enc_layers': 3,
+			'num_state_obs_per_token': 16},
+	'XL':  {'hidden_size': 512, # 704+att=>~12.2M parameters
 			'num_heads': 16,
 			'expansion': 8.0,
 			'H_cycles': 3,
 			'L_cycles': 10,
 			'L_layers': 4,
-			'latent_dim': 704,
-			'num_enc_layers': 4,},
+			'latent_dim': 512,
+			'num_enc_layers': 4,
+			'num_state_obs_per_token': 16},
 }
 
 TASK_SET = {
