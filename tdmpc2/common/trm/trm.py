@@ -177,8 +177,9 @@ class TRMInner(nn.Module):
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
 
-        # [CLS] token: learnable aggrevation token prepended to position 0
-        self.cls_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=embed_init_std).to(device="cuda"), persistent=True)
+        # [CLS] token: learnable aggregation token prepended to position 0
+        if self.config.pooling_strategy == "cls":
+            self.cls_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=embed_init_std).to(device="cuda"), persistent=True)
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -187,7 +188,7 @@ class TRMInner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
     def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
-        """Process input tesnors (x) into tokens, which are then summed with the hidden states"""
+        """Process input (observation; x) into tokens, which are then summed with the hidden states (y and z)"""
         batch_size = input.shape[0]
 
         # State observation patching
@@ -230,9 +231,12 @@ class TRMInner(nn.Module):
         # Concatenate all content tokens: (batch_size, num_task_tokens + num_state_tokens, hidden_size)
         content = torch.cat(tokens, dim=1)
 
-        # Prepend [CLS] token at position 0
-        cls_token = self.cls_init.unsqueeze(0).expand(batch_size, 1, -1)  # (batch_size, 1, hidden_size)
-        embedding = torch.cat([cls_token, content], dim=1)  # (batch_size, seq_len, hidden_size)
+        # Prepend [CLS] token at position 0 (only when using CLS pooling)
+        if self.config.pooling_strategy == "cls":
+            cls_token = self.cls_init.unsqueeze(0).expand(batch_size, 1, -1)  # (batch_size, 1, hidden_size)
+            embedding = torch.cat([cls_token, content], dim=1)  # (batch_size, seq_len, hidden_size)
+        else:
+            embedding = content  # (batch_size, seq_len, hidden_size)
 
         # Position embedding (if learned)
         if self.config.pos_encodings == "learned":
@@ -281,9 +285,14 @@ class TRMInner(nn.Module):
 
         # LM Outputs
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
-        # [CLS] token at position 0
-        output = self.lm_head_norm(self.lm_head(z_H[:, 0]).to(torch.float32))  # (batch_size, latent_dim), SimNorm-normalized
-        q_logits = self.q_head(z_H[:, 0]).to(torch.float32)  # (batch_size, 2)
+        if self.config.pooling_strategy == "cls":
+            # [CLS] token at position 0
+            pooled = z_H[:, 0]  # (batch_size, hidden_size)
+        else:
+            # Mean pooling over all sequence positions
+            pooled = z_H.mean(dim=1)  # (batch_size, hidden_size)
+        output = self.lm_head_norm(self.lm_head(pooled).to(torch.float32))  # (batch_size, latent_dim), SimNorm-normalized
+        q_logits = self.q_head(pooled).to(torch.float32)  # (batch_size, 2)
         return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
 
 
@@ -318,9 +327,9 @@ class TRM(nn.Module):
 
         # Calculate total sequence length
         if self.config.obs == 'state':
-            self.config.seq_len = 1 + self.config.num_state_tokens + self.config.num_task_tokens # +1 for the [CLS] token at position 0
+            self.config.seq_len = (1 if self.config.pooling_strategy == "cls" else 0) + self.config.num_state_tokens + self.config.num_task_tokens
         elif self.config.obs == 'rgb':
-            self.config.seq_len = 1 + self.config.num_state_tokens + self.config.num_task_tokens + self.config.num_rgb_tokens # TODO: rgb may disable state observations. This is not ideal for VLA-type tasks
+            self.config.seq_len = (1 if self.config.pooling_strategy == "cls" else 0) + self.config.num_state_tokens + self.config.num_task_tokens + self.config.num_rgb_tokens # TODO: rgb may disable state observations. This is not ideal for VLA-type tasks
         else:
             raise NotImplementedError(f"Unexpected observation type: {self.config.obs}")
         

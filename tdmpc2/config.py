@@ -115,6 +115,7 @@ class Config:
 	L_cycles: int = 6
 	L_layers: int = 2
 	num_state_obs_per_token: int = 16						# Number of values in the state observation vector to place in each token. Affects the sequence length
+	pooling_strategy: str = "mean"							# pooling strategy for transformer encoder output, one of ["mean", "cls"]
 
 	# Transformer config
 	hidden_size: int = 512									# Size for z and y in the TRM, normally set to latent_dim
