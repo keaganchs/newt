@@ -43,4 +43,4 @@ python3 $PYTHON_SCRIPT \
     H_cycles=1 \
     L_cycles=1 \
     num_state_obs_per_token=128 \
-    aggregation_method="mean" \
+    pooling_strategy="mean" \
