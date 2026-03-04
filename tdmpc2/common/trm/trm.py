@@ -13,7 +13,7 @@ from torch import nn
 from pydantic import BaseModel
 
 from config import Config
-from common.layers import mlp
+from common.layers import mlp, SimNorm
 from common.trm.trm_layers import trunc_normal_init_, rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear, CastedSparseEmbedding
 
 """
@@ -101,7 +101,6 @@ class TRMReasoningModule(nn.Module):
         super().__init__()
         self.layers = torch.nn.ModuleList(layers)
 
-    @torch.compile()
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs) -> torch.Tensor:
         hidden_states = hidden_states + input_injection
         for layer in self.layers:
@@ -147,19 +146,19 @@ class TRMInner(nn.Module):
                 trunc_normal_init_(self.task_proj.weight, std=embed_init_std)
 
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False).to(device="cuda")
+        self.lm_head_norm = SimNorm(self.config)  # SimNorm to match baseline encoder output distribution
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda") # TODO: check q_head needs 2 outputs or just 1 for halt logit
         
-        # Task embedding: learnable token initialized from CLIP embeddings (if available)
-        self.task_emb_init: torch.Tensor = None
-
+        # Task embedding: frozen CLIP embeddings stored as a buffer for state_dict compatibility
         if self.config.task_dim > 0:
             num_tasks = len(self.config.task_embeddings) if self.config.task_embeddings is not None else 1
             
             # Initialize with task_embeddings from config if available
             if self.config.task_embeddings is not None:
-                self.task_emb_init = torch.tensor(self.config.task_embeddings).to(device="cuda", dtype=self.forward_dtype)
+                _task_emb = torch.tensor(self.config.task_embeddings, dtype=self.forward_dtype)
             else: # Default to truncated normal init
-                self.task_emb_init = trunc_normal_init_(torch.empty((num_tasks, self.config.task_dim), dtype=self.forward_dtype), std=embed_init_std).to(device="cuda")
+                _task_emb = trunc_normal_init_(torch.empty((num_tasks, self.config.task_dim), dtype=self.forward_dtype), std=embed_init_std)
+            self.task_emb_init = nn.Buffer(_task_emb.to(device="cuda"), persistent=True)
 
         # LM Blocks
         if self.config.pos_encodings == "rope":
@@ -198,7 +197,7 @@ class TRMInner(nn.Module):
 
         obs = input
         # Pad obs so it's divisible by num_state_obs_per_token
-        if (self.config.hidden_size % input.shape[1]) > 0:
+        if self.config.obs_pad_len > 0:
             obs = F.pad(obs, (0, self.config.obs_pad_len))  # (batch_size, obs_dim + pad)
         # Reshape into patches: -> (batch_size, num_state_tokens, num_state_obs_per_token)
         obs_patches = obs.view(batch_size, self.config.num_state_tokens, self.config.num_state_obs_per_token)
@@ -283,7 +282,7 @@ class TRMInner(nn.Module):
         # LM Outputs
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
         # [CLS] token at position 0
-        output = self.lm_head(z_H[:, 0]).to(torch.float32)  # (batch_size, latent_dim)
+        output = self.lm_head_norm(self.lm_head(z_H[:, 0]).to(torch.float32))  # (batch_size, latent_dim), SimNorm-normalized
         q_logits = self.q_head(z_H[:, 0]).to(torch.float32)  # (batch_size, 2)
         return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
 
