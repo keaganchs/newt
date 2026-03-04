@@ -40,6 +40,7 @@ python3 $PYTHON_SCRIPT \
     wandb_entity="keagan" \
     wandb_run_name="dmc_newt_s" \
     enable_wandb=True \
-    H_cycles=2 \
-    L_cycles=6 \
-    num_state_obs_per_token=16 \
+    H_cycles=1 \
+    L_cycles=1 \
+    num_state_obs_per_token=128 \
+    aggregation_method="mean" \
