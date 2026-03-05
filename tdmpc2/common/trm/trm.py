@@ -122,8 +122,8 @@ class TRMInner(nn.Module):
         super().__init__()
 
         # I/O
-        self.embed_scale = math.sqrt(self.config.hidden_size)
-        embed_init_std = 1.0 / self.embed_scale
+        self.embed_scale = 1.0 # math.sqrt(self.config.hidden_size)
+        embed_init_std = 0.02 # 1.0 / self.embed_scale
 
         # State observation: project each patch of num_state_obs_per_token scalars to hidden_size
         # self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
@@ -146,6 +146,8 @@ class TRMInner(nn.Module):
                 trunc_normal_init_(self.task_proj.weight, std=embed_init_std)
 
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False).to(device="cuda")
+        with torch.no_grad():
+            trunc_normal_init_(self.lm_head.weight, std=0.02)  # Match Newt's default nn.Linear init
         self.lm_head_norm = SimNorm(self.config)  # SimNorm to match baseline encoder output distribution
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda") # TODO: check q_head needs 2 outputs or just 1 for halt logit
         
