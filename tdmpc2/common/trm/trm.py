@@ -126,7 +126,7 @@ class TRMInner(nn.Module):
         embed_init_std = 0.02 # 1.0 / self.embed_scale
 
         # State observation: project each patch of num_state_obs_per_token scalars to hidden_size
-        # self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+        # self.embed_tokens = CastedEmbedding(self.config.num_tasks, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.embed_state_obs = CastedLinear(self.config.num_state_obs_per_token, self.config.hidden_size, bias=False)
         with torch.no_grad():
             trunc_normal_init_(self.embed_state_obs.weight, std=embed_init_std)
@@ -149,7 +149,6 @@ class TRMInner(nn.Module):
         with torch.no_grad():
             trunc_normal_init_(self.lm_head.weight, std=0.02)  # Match Newt's default nn.Linear init
         self.lm_head_norm = SimNorm(self.config)  # SimNorm to match baseline encoder output distribution
-        self.embed_norm   = SimNorm(self.config)  # SimNorm on input embeddings for group-sparse injection
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda") # TODO: check q_head needs 2 outputs or just 1 for halt logit
         
         # Task embedding: frozen CLIP embeddings stored as a buffer for state_dict compatibility
@@ -176,9 +175,10 @@ class TRMInner(nn.Module):
         # Reasoning Layers
         self.L_level = TRMReasoningModule(layers=[TRMBlock(self.config).to(device="cuda") for _ in range(self.config.L_layers)])
 
-        # Initial states
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
-        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1).to(device="cuda"), persistent=True)
+        # Initial carry states (zero-init: carry is recreated fresh every encode() call,
+        # so non-zero init just adds fixed noise that overwhelms the input signal)
+        self.H_init = nn.Buffer(torch.zeros(self.config.hidden_size, dtype=self.forward_dtype, device="cuda"), persistent=True)
+        self.L_init = nn.Buffer(torch.zeros(self.config.hidden_size, dtype=self.forward_dtype, device="cuda"), persistent=True)
 
         # [CLS] token: learnable aggregation token prepended to position 0
         if self.config.pooling_strategy == "cls":
@@ -237,22 +237,15 @@ class TRMInner(nn.Module):
         # Position embedding (if learned)
         if self.config.pos_encodings == "learned":
             # scale by 1/sqrt(2) to maintain forward variance
-            embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight.to(self.forward_dtype))
+            content = 0.707106781 * (content + self.embed_pos.embedding_weight.to(self.forward_dtype))
 
         # Scale
-        out = (embedding * self.embed_scale).to(self.forward_dtype)
-
-        # SimNorm applies per-group softmax (simnorm_dim groups), encouraging within-group sparsity.
-        # Since embeddings include task tokens, different tasks produce distinct sparsity patterns,
-        # creating task-dependent "engram-like" activation structures in the injection signal.
-        out = self.embed_norm(out) - (1.0 / self.config.simnorm_dim)
+        out = (content * self.embed_scale).to(self.forward_dtype)
 
         # Prepend [CLS] token at position 0 (only when using CLS pooling)
         if self.config.pooling_strategy == "cls":
             cls_token = self.cls_init.unsqueeze(0).expand(batch_size, 1, -1)  # (batch_size, 1, hidden_size)
-            out = torch.cat([cls_token, content], dim=1)  # (batch_size, seq_len, hidden_size)
-        else:
-            out = content  # (batch_size, seq_len, hidden_size)
+            out = torch.cat([cls_token, out], dim=1)  # (batch_size, seq_len, hidden_size)
 
         return out
 
