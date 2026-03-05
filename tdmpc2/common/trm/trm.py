@@ -234,13 +234,6 @@ class TRMInner(nn.Module):
         # Concatenate all content tokens: (batch_size, num_task_tokens + num_state_tokens, hidden_size)
         content = torch.cat(tokens, dim=1)
 
-        # Prepend [CLS] token at position 0 (only when using CLS pooling)
-        if self.config.pooling_strategy == "cls":
-            cls_token = self.cls_init.unsqueeze(0).expand(batch_size, 1, -1)  # (batch_size, 1, hidden_size)
-            embedding = torch.cat([cls_token, content], dim=1)  # (batch_size, seq_len, hidden_size)
-        else:
-            embedding = content  # (batch_size, seq_len, hidden_size)
-
         # Position embedding (if learned)
         if self.config.pos_encodings == "learned":
             # scale by 1/sqrt(2) to maintain forward variance
@@ -253,6 +246,13 @@ class TRMInner(nn.Module):
         # Since embeddings include task tokens, different tasks produce distinct sparsity patterns,
         # creating task-dependent "engram-like" activation structures in the injection signal.
         out = self.embed_norm(out) - (1.0 / self.config.simnorm_dim)
+
+        # Prepend [CLS] token at position 0 (only when using CLS pooling)
+        if self.config.pooling_strategy == "cls":
+            cls_token = self.cls_init.unsqueeze(0).expand(batch_size, 1, -1)  # (batch_size, 1, hidden_size)
+            out = torch.cat([cls_token, content], dim=1)  # (batch_size, seq_len, hidden_size)
+        else:
+            out = content  # (batch_size, seq_len, hidden_size)
 
         return out
 
