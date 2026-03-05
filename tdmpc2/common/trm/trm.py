@@ -149,6 +149,7 @@ class TRMInner(nn.Module):
         with torch.no_grad():
             trunc_normal_init_(self.lm_head.weight, std=0.02)  # Match Newt's default nn.Linear init
         self.lm_head_norm = SimNorm(self.config)  # SimNorm to match baseline encoder output distribution
+        self.embed_norm   = SimNorm(self.config)  # SimNorm on input embeddings for group-sparse injection
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda") # TODO: check q_head needs 2 outputs or just 1 for halt logit
         
         # Task embedding: frozen CLIP embeddings stored as a buffer for state_dict compatibility
@@ -247,6 +248,12 @@ class TRMInner(nn.Module):
 
         # Scale
         out = (embedding * self.embed_scale).to(self.forward_dtype)
+
+        # SimNorm applies per-group softmax (simnorm_dim groups), encouraging within-group sparsity.
+        # Since embeddings include task tokens, different tasks produce distinct sparsity patterns,
+        # creating task-dependent "engram-like" activation structures in the injection signal.
+        out = self.embed_norm(out) - (1.0 / self.config.simnorm_dim)
+
         return out
 
     def empty_carry(self, batch_size: int, device: Optional[torch.device] = None) -> TRMInnerCarry:
