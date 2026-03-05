@@ -83,7 +83,7 @@ class Config:
 	trm_size: Optional[str] = None							# TRM size, defaults to model_size; see tdmpc2/common/__init__.py for options
 	num_enc_layers: int = 3									# number of encoder layers, overridden by model_size
 	
-	enc_dim: int = 256										# encoder mlp width, overridden by model_size. Large effect on TRM total parameter size
+	enc_dim: int = 256										# encoder mlp width, overridden by model_size
 	mlp_dim: int = 1024										# model mlp width, overridden by model_size
 	
 	latent_dim: int = 256									# model latent state dim, overridden by model_size
@@ -110,7 +110,6 @@ class Config:
 	# TRM config, most options are overridden by `model_size` or `trm_size` if specified
 	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
 	mlp_t: bool = False 									# use mlp on L instead of transformer
-	vocab_size: int = 200									# Should be set to num_tasks
 	H_cycles: int = 2
 	L_cycles: int = 6
 	L_layers: int = 2
@@ -171,6 +170,17 @@ def parse_cfg(cfg):
 	"""
 	Parses the experiment config dataclass. Mostly for convenience.
 	"""
+	# Collect CLI overrides so they take priority over model/TRM size presets
+	try:
+		from hydra.core.hydra_config import HydraConfig
+		cli_overrides = set()
+		for o in HydraConfig.get().overrides.task:
+			# Parse key from override string (handles key=val, +key=val, ~key, ++key=val)
+			key = o.split('=')[0].lstrip('+~-')
+			cli_overrides.add(key)
+	except Exception:
+		cli_overrides = set()
+
 	# Convenience
 	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / str(cfg.seed) / cfg.exp_name
 	cfg.task_title = cfg.task.replace("-", " ").title()
@@ -183,20 +193,18 @@ def parse_cfg(cfg):
 		assert cfg.model_size in MODEL_SIZE.keys(), \
 			f'Invalid model size {cfg.model_size}. Must be one of {list(MODEL_SIZE.keys())}'
 		for k, v in MODEL_SIZE[cfg.model_size].items():
-			cfg[k] = v
-			# TRM size
-			if cfg.use_trm_encoder:
-				if cfg.get('trm_size', None) is None:
-					cfg['trm_size'] = cfg.model_size
-				assert cfg.trm_size in TRM_SIZE.keys(), \
-					f'Invalid TRM size {cfg.trm_size}. Must be one of {list(TRM_SIZE.keys())}'
-				for k, v in TRM_SIZE[cfg.trm_size].items():
+			if k not in cli_overrides:
+				cfg[k] = v
+
+		# TRM size
+		if cfg.use_trm_encoder:
+			if cfg.get('trm_size', None) is None:
+				cfg['trm_size'] = cfg.model_size
+			assert cfg.trm_size in TRM_SIZE.keys(), \
+				f'Invalid TRM size {cfg.trm_size}. Must be one of {list(TRM_SIZE.keys())}'
+			for k, v in TRM_SIZE[cfg.trm_size].items():
+				if k not in cli_overrides:
 					cfg[k] = v
-			
-			# Overwrite vocab_size to latent_dim for TRM encoder (continuous state encoding)
-			# to avoid allocating massive unused embedding layers.
-			# Also ensures lm_head output dimension matches what TD-MPC2 expects.
-			cfg.vocab_size = cfg.latent_dim
 
 	# Set defaults
 	cfg.tasks = TASK_SET.get(cfg.task, [cfg.task] * cfg.num_envs)
