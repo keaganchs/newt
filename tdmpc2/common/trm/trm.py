@@ -149,6 +149,8 @@ class TRMInner(nn.Module):
         with torch.no_grad():
             trunc_normal_init_(self.lm_head.weight, std=0.02)  # Match Newt's default nn.Linear init
         self.lm_head_norm = SimNorm(self.config)  # SimNorm to match baseline encoder output distribution
+        if self.config.use_trm_hidden_state_simnorm:
+            self.embed_norm = SimNorm(self.config)  # SimNorm on input to help match the output distribution
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda") # TODO: check q_head needs 2 outputs or just 1 for halt logit
         
         # Task embedding: frozen CLIP embeddings stored as a buffer for state_dict compatibility
@@ -241,6 +243,9 @@ class TRMInner(nn.Module):
 
         # Scale
         out = (content * self.embed_scale).to(self.forward_dtype)
+
+        if self.config.use_trm_hidden_state_simnorm:
+            out = self.embed_norm(out) - (1.0 / self.config.simnorm_dim)
 
         # Prepend [CLS] token at position 0 (only when using CLS pooling)
         if self.config.pooling_strategy == "cls":
