@@ -95,8 +95,8 @@ class Config:
 	# logging
 	wandb_project: str = "newt_trm"							# wandb project name
 	wandb_entity: str = "keagan"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = "trm_att"				# wandb run name (defaults to <seed>)
-	enable_wandb: bool = False								# whether to enable wandb logging
+	wandb_run_name: Optional[str] = "dmc_trm"				# wandb run name (defaults to <seed>)
+	enable_wandb: bool = True								# whether to enable wandb logging
 
 	# misc
 	multiproc: bool = True									# whether to use multiple GPUs (will use all visible GPUs)
@@ -109,13 +109,13 @@ class Config:
 
 	# TRM config, most options are overridden by `model_size` or `trm_size` if specified
 	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
-	mlp_t: bool = False 									# use mlp on L instead of transformer
+	mlp_t: bool = True 									# use mlp on L instead of transformer
 	H_cycles: int = 2
 	L_cycles: int = 6
 	L_layers: int = 2
 	num_state_obs_per_token: int = 16						# Number of values in the state observation vector to place in each token. Affects the sequence length
 	pooling_strategy: str = "mean"							# pooling strategy for transformer encoder output, one of ["mean", "cls"]
-	use_trm_hidden_state_simnorm: bool = False						# whether to apply SimNorm to the hidden state before pooling
+	use_trm_hidden_state_simnorm: bool = True				# whether to apply SimNorm to the hidden state before pooling
 
 	# Transformer config
 	hidden_size: int = 512									# Size for z and y in the TRM, normally set to latent_dim
