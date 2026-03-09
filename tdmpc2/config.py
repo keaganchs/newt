@@ -83,7 +83,7 @@ class Config:
 	trm_size: Optional[str] = None							# TRM size, defaults to model_size; see tdmpc2/common/__init__.py for options
 	num_enc_layers: int = 3									# number of encoder layers, overridden by model_size
 	
-	enc_dim: int = 256										# encoder mlp width, overridden by model_size. Large effect on TRM total parameter size
+	enc_dim: int = 256										# encoder mlp width, overridden by model_size
 	mlp_dim: int = 1024										# model mlp width, overridden by model_size
 	
 	latent_dim: int = 256									# model latent state dim, overridden by model_size
@@ -95,8 +95,8 @@ class Config:
 	# logging
 	wandb_project: str = "newt_trm"							# wandb project name
 	wandb_entity: str = "keagan"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = "trm_att"				# wandb run name (defaults to <seed>)
-	enable_wandb: bool = False								# whether to enable wandb logging
+	wandb_run_name: Optional[str] = "dmc_trm"				# wandb run name (defaults to <seed>)
+	enable_wandb: bool = True								# whether to enable wandb logging
 
 	# misc
 	multiproc: bool = True									# whether to use multiple GPUs (will use all visible GPUs)
@@ -109,14 +109,16 @@ class Config:
 
 	# TRM config, most options are overridden by `model_size` or `trm_size` if specified
 	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
-	mlp_t: bool = False 									# use mlp on L instead of transformer. The MLP mixer scales with seq_len^2, while the attention verion scales with hidden_size^2
-	vocab_size: int = 200									# Should be set to num_tasks
+	mlp_t: bool = True 									# use mlp on L instead of transformer
 	H_cycles: int = 2
 	L_cycles: int = 6
 	L_layers: int = 2
+	num_state_obs_per_token: int = 16						# Number of values in the state observation vector to place in each token. Affects the sequence length
+	pooling_strategy: str = "mean"							# pooling strategy for transformer encoder output, one of ["mean", "cls"]
+	use_trm_hidden_state_simnorm: bool = True				# whether to apply SimNorm to the hidden state before pooling
 
 	# Transformer config
-	hidden_size: int = 640									# Size for z and y in the TRM, normally set to latent_dim
+	hidden_size: int = 512									# Size for z and y in the TRM, normally set to latent_dim
 	expansion: float = 4.0
 	num_heads: int = 10										# Originally min(2, hidden_size // 64)
 	pos_encodings: str = "rope"								# "rope" or "learned"
@@ -151,7 +153,10 @@ class Config:
 	world_size: int = 1
 	port: Optional[str] = None
 	child_env: bool = False
-	task_emb_len: Optional[int] = None						# len(task_embeddings)
+	num_task_tokens: Optional[int] = None	
+	num_state_tokens: Optional[int] = None
+	num_rgb_tokens: Optional[int] = None
+	obs_pad_len: Optional[int] = None 							# Number of zeros needed to pad the state observation when projecting to tokens					
 	seq_len: Optional[int] = None  							# sequence length for TRM: obs_state + obs_rgb + task_emb_len
 
 	get = lambda self, val, default=None: getattr(self, val, default)
@@ -166,6 +171,17 @@ def parse_cfg(cfg):
 	"""
 	Parses the experiment config dataclass. Mostly for convenience.
 	"""
+	# Collect CLI overrides so they take priority over model/TRM size presets
+	try:
+		from hydra.core.hydra_config import HydraConfig
+		cli_overrides = set()
+		for o in HydraConfig.get().overrides.task:
+			# Parse key from override string (handles key=val, +key=val, ~key, ++key=val)
+			key = o.split('=')[0].lstrip('+~-')
+			cli_overrides.add(key)
+	except Exception:
+		cli_overrides = set()
+
 	# Convenience
 	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / str(cfg.seed) / cfg.exp_name
 	cfg.task_title = cfg.task.replace("-", " ").title()
@@ -178,20 +194,18 @@ def parse_cfg(cfg):
 		assert cfg.model_size in MODEL_SIZE.keys(), \
 			f'Invalid model size {cfg.model_size}. Must be one of {list(MODEL_SIZE.keys())}'
 		for k, v in MODEL_SIZE[cfg.model_size].items():
-			cfg[k] = v
-			# TRM size
-			if cfg.use_trm_encoder:
-				if cfg.get('trm_size', None) is None:
-					cfg['trm_size'] = cfg.model_size
-				assert cfg.trm_size in TRM_SIZE.keys(), \
-					f'Invalid TRM size {cfg.trm_size}. Must be one of {list(TRM_SIZE.keys())}'
-				for k, v in TRM_SIZE[cfg.trm_size].items():
+			if k not in cli_overrides:
+				cfg[k] = v
+
+		# TRM size
+		if cfg.use_trm_encoder:
+			if cfg.get('trm_size', None) is None:
+				cfg['trm_size'] = cfg.model_size
+			assert cfg.trm_size in TRM_SIZE.keys(), \
+				f'Invalid TRM size {cfg.trm_size}. Must be one of {list(TRM_SIZE.keys())}'
+			for k, v in TRM_SIZE[cfg.trm_size].items():
+				if k not in cli_overrides:
 					cfg[k] = v
-			
-			# Overwrite vocab_size to latent_dim for TRM encoder (continuous state encoding)
-			# to avoid allocating massive unused embedding layers.
-			# Also ensures lm_head output dimension matches what TD-MPC2 expects.
-			cfg.vocab_size = cfg.latent_dim
 
 	# Set defaults
 	cfg.tasks = TASK_SET.get(cfg.task, [cfg.task] * cfg.num_envs)
