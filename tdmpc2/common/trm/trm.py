@@ -44,28 +44,31 @@ class TRMBlock(nn.Module):
     def __init__(self, config: Config) -> None:
         super().__init__()
         self.config = config
+        self.tokenize = getattr(self.config, 'trm_tokenize', True)
         
-        # MLP or Attention layers
-        if self.config.mlp_t:
-            self.mlp_t = SwiGLU(
-                hidden_size=self.config.seq_len, # L
-                expansion=config.expansion,
-            )
+        # Token mixing layers (disabled in flat mode)
+        if self.tokenize:
+            if self.config.mlp_t:
+                self.mlp_t = SwiGLU(
+                    hidden_size=self.config.seq_len, # L
+                    expansion=config.expansion,
+                )
 
-            # Pure MLP version
-            # self.mlp_t = mlp(
-            #     in_dim=self.config.seq_len, # L
-            #     mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
-            #     out_dim=self.config.seq_len,
-            # )
-        else:
-            self.self_attn = Attention(
-                hidden_size=self.config.hidden_size,
-                head_dim=self.config.hidden_size // self.config.num_heads,
-                num_heads=self.config.num_heads,
-                num_key_value_heads=self.config.num_heads,
-                causal=False
-            )
+                # Pure MLP version
+                # self.mlp_t = mlp(
+                #     in_dim=self.config.seq_len, # L
+                #     mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
+                #     out_dim=self.config.seq_len,
+                # )
+            else:
+                self.self_attn = Attention(
+                    hidden_size=self.config.hidden_size,
+                    head_dim=self.config.hidden_size // self.config.num_heads,
+                    num_heads=self.config.num_heads,
+                    num_key_value_heads=self.config.num_heads,
+                    causal=False
+                )
+        # Channel mixing MLP (operates on hidden_size in tokenized mode, flat_dim in flat mode)
         self.mlp = SwiGLU(
             hidden_size=config.hidden_size,
             expansion=config.expansion,
@@ -80,17 +83,19 @@ class TRMBlock(nn.Module):
         self.norm_eps = self.config.rms_norm_eps
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
-        # B, L, D = hidden_states.shape
-        # Post Norm. Adding .contiguous() gives a small speedup to the matrix multiplications
-        if self.config.mlp_t:
-            hidden_states = hidden_states.transpose(1,2).contiguous()
-            out = self.mlp_t(hidden_states)
-            hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
-            hidden_states = hidden_states.transpose(1,2).contiguous()
-        else:
-            # Self Attention
-            hidden_states = rms_norm(hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states), variance_epsilon=self.norm_eps)
-        # Fully Connected
+        # Token mixing (disabled in flat mode)
+        if self.tokenize:
+            # B, L, D = hidden_states.shape
+            # Post Norm. Adding .contiguous() gives a small speedup to the matrix multiplications
+            if self.config.mlp_t:
+                hidden_states = hidden_states.transpose(1,2).contiguous()
+                out = self.mlp_t(hidden_states)
+                hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
+                hidden_states = hidden_states.transpose(1,2).contiguous()
+            else:
+                # Self Attention
+                hidden_states = rms_norm(hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states), variance_epsilon=self.norm_eps)
+        # Channel mixing
         out = self.mlp(hidden_states)
         hidden_states = rms_norm(hidden_states + out, variance_epsilon=self.norm_eps)
         return hidden_states
@@ -120,22 +125,24 @@ class TRMInner(nn.Module):
                 raise ValueError(f"Invalid torch dtype: {self.config.forward_dtype}")
 
         super().__init__()
+        self.tokenize = getattr(self.config, 'trm_tokenize', True)
 
         # I/O
         self.embed_scale = 1.0 # math.sqrt(self.config.hidden_size)
         embed_init_std = 0.02 # 1.0 / self.embed_scale
 
-        # State observation: project each patch of num_state_obs_per_token scalars to hidden_size
+        # State observation: if tokenized, project each patch of num_state_obs_per_token scalars to hidden_size
         # self.embed_tokens = CastedEmbedding(self.config.num_tasks, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        self.embed_state_obs = CastedLinear(self.config.num_state_obs_per_token, self.config.hidden_size, bias=False)
-        with torch.no_grad():
-            trunc_normal_init_(self.embed_state_obs.weight, std=embed_init_std)
+        if self.tokenize:
+            self.embed_state_obs = CastedLinear(self.config.num_state_obs_per_token, self.config.hidden_size, bias=False)
+            with torch.no_grad():
+                trunc_normal_init_(self.embed_state_obs.weight, std=embed_init_std)
 
-        # Task embedding projection: handles task_dim != hidden_size
+        # Task embedding projection (tokenized mode only)
         # If task_dim == hidden_size: use the CLIP token directly as 1 token (no projection)
         # If task_dim < hidden_size: project up to hidden_size -> 1 token
         # If task_dim > hidden_size: project to num_task_tokens * hidden_size -> multiple tokens
-        if self.config.task_dim > 0 and self.config.task_dim != self.config.hidden_size:
+        if self.tokenize and self.config.task_dim > 0 and self.config.task_dim != self.config.hidden_size:
             if self.config.task_dim < self.config.hidden_size:
                 # Project up: (task_dim,) -> (hidden_size,) = 1 token
                 self.task_proj = CastedLinear(self.config.task_dim, self.config.hidden_size, bias=False).to(device="cuda")
@@ -164,15 +171,14 @@ class TRMInner(nn.Module):
                 _task_emb = trunc_normal_init_(torch.empty((num_tasks, self.config.task_dim), dtype=self.forward_dtype), std=embed_init_std)
             self.task_emb_init = nn.Buffer(_task_emb.to(device="cuda"), persistent=True)
 
-        # LM Blocks
-        if self.config.pos_encodings == "rope":
-            self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,
-                                              max_position_embeddings=self.config.seq_len,
-                                              base=self.config.rope_theta).to(device="cuda")
-        elif self.config.pos_encodings == "learned":
-            self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype).to(device="cuda")
-        else:
-            pass
+        # Position encodings (tokenized mode only)
+        if self.tokenize:
+            if self.config.pos_encodings == "rope":
+                self.rotary_emb = RotaryEmbedding(dim=self.config.hidden_size // self.config.num_heads,
+                                                  max_position_embeddings=self.config.seq_len,
+                                                  base=self.config.rope_theta).to(device="cuda")
+            elif self.config.pos_encodings == "learned":
+                self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype).to(device="cuda")
 
         # Reasoning Layers
         self.L_level = TRMReasoningModule(layers=[TRMBlock(self.config).to(device="cuda") for _ in range(self.config.L_layers)])
@@ -183,8 +189,8 @@ class TRMInner(nn.Module):
         self.H_init = nn.Buffer(torch.zeros(self.config.hidden_size, dtype=self.forward_dtype, device="cuda"), persistent=True)
         self.L_init = nn.Buffer(torch.zeros(self.config.hidden_size, dtype=self.forward_dtype, device="cuda"), persistent=True)
 
-        # [CLS] token: learnable aggregation token prepended to position 0
-        if self.config.pooling_strategy == "cls":
+        # [CLS] token: learnable aggregation token prepended to position 0 (tokenized mode only)
+        if self.tokenize and self.config.pooling_strategy == "cls":
             self.cls_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=embed_init_std).to(device="cuda"), persistent=True)
 
         # Q head special init
@@ -194,14 +200,26 @@ class TRMInner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
     def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
-        """Process input (observation; x) into tokens, which are then summed with the hidden states (y and z)"""
+        """Process input into token embeddings (tokenized) or a flat vector (flat mode)."""
         batch_size = input.shape[0]
 
-        # State observation patching
-        # input: (batch_size, obs_dim)
         if not input.is_floating_point():
             raise NotImplementedError("TRM currently only supports continuous inputs.")
 
+        # Flat mode: concatenate raw obs and task embeddings, recurse, then project with lm_head
+        if not self.tokenize:
+            parts = [input]  # (batch_size, obs_dim)
+            if self.config.task_dim > 0:
+                task_vec = self.task_emb_init[task_embedding.long()]  # (batch_size, task_dim)
+                parts.append(task_vec)
+            out = torch.cat(parts, dim=-1).to(self.forward_dtype)  # (batch_size, flat_dim)
+            if self.config.use_trm_hidden_state_simnorm:
+                out = self.embed_norm(out) - (1.0 / self.config.simnorm_dim)
+            return out
+
+        # Tokenized mode: patch obs (and task embedding) into tokens
+        # State observation patching
+        # input: (batch_size, obs_dim)
         obs = input
         # Pad obs so it's divisible by num_state_obs_per_token
         if self.config.obs_pad_len > 0:
@@ -256,12 +274,26 @@ class TRMInner(nn.Module):
         return out
 
     def empty_carry(self, batch_size: int, device: Optional[torch.device] = None) -> TRMInnerCarry:
+        if not self.tokenize:
+            # Flat mode: carry is (batch, hidden_size) (note hidden_size == flat_dim is set automatically)
+            return TRMInnerCarry(
+                z_H=torch.empty(batch_size, self.config.hidden_size, dtype=self.forward_dtype, device=device),
+                z_L=torch.empty(batch_size, self.config.hidden_size, dtype=self.forward_dtype, device=device),
+            )
+        # Tokenized mode: carry is (batch, seq_len, hidden_size)
         return TRMInnerCarry(
             z_H=torch.empty(batch_size, self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
             z_L=torch.empty(batch_size, self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
         )
         
     def reset_carry(self, reset_flag: torch.Tensor, carry: TRMInnerCarry):
+        if not self.tokenize:
+            # Flat mode: (batch, hidden_size), broadcast flag as (batch, 1)
+            return TRMInnerCarry(
+                z_H=torch.where(reset_flag.view(-1, 1), self.H_init, carry.z_H),
+                z_L=torch.where(reset_flag.view(-1, 1), self.L_init, carry.z_L),
+            )
+        # Tokenized mode: (batch, seq_len, hidden_size), broadcast flag as (batch, 1, 1)
         return TRMInnerCarry(
             z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
             z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
@@ -293,7 +325,10 @@ class TRMInner(nn.Module):
 
         # LM Outputs
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
-        if self.config.pooling_strategy == "cls":
+        if not self.tokenize:
+            # No pooling needed
+            pooled = z_H
+        elif self.config.pooling_strategy == "cls":
             # [CLS] token at position 0
             pooled = z_H[:, 0]  # (batch_size, hidden_size)
         else:
@@ -310,36 +345,52 @@ class TRM(nn.Module):
     def __init__(self, config: Config):
         self.config = config
 
-        # Calculate length of task embedding chunks 
-        if self.config.task_dim > 0:
-             self.config.num_task_tokens = -(self.config.task_dim // -self.config.hidden_size) # ceil div
-        else:
-             self.config.num_task_tokens = 0
-
-        # Calculate obs patch sizes. One token will share a number of observations (e.g. 16) to reduce sequence length
-        obs_dim = self.config.obs_shape['state'][0]
-        if self.config.num_state_obs_per_token > 1:
-            # ceil(obs_dim / num_state_obs_per_token)
-            self.config.num_state_tokens = -(obs_dim // -self.config.num_state_obs_per_token)
-            # Pad size: how many zeros to append so obs_dim is divisible by num_state_obs_per_token
-            self.config.obs_pad_len = self.config.num_state_tokens * self.config.num_state_obs_per_token - obs_dim
-        else: 
-            # Project each scalar in the observation vector to its own token
-            self.config.num_state_tokens = obs_dim
+        if not getattr(self.config, 'trm_tokenize', True):
+            # Flat/vector mode
+            # Obs and task are concatenated into a single vector.
+            # hidden_size is set to flat_dim (obs_dim + task_dim)
+            # No (token) mixing
+            # Carry shape: (batch, flat_dim) instead of (batch, seq_len, hidden_size).
+            obs_dim = self.config.obs_shape['state'][0]
+            flat_dim = obs_dim + (self.config.task_dim if self.config.task_dim > 0 else 0)
+            self.config.flat_dim = flat_dim
+            self.config.hidden_size = flat_dim  # SwiGLU channel MLP size = flat vector length
+            self.config.seq_len = 1             # not used in flat mode
+            self.config.num_task_tokens = 0
+            self.config.num_state_tokens = 0
             self.config.obs_pad_len = 0
-
-        if self.config.obs == 'rgb':
-            raise NotImplementedError("RGB Observations are not yet implemented with the TRM architecture.")
-            # TODO: check vision encoder token size(s). Just 1 512-dim token?
-            self.config.num_rgb_tokens = -(self.config.obs_shape['rgb'][0] // -self.config.hidden_size)
-
-        # Calculate total sequence length (+1 for [CLS] token at position 0)
-        if self.config.obs == 'state':
-            self.config.seq_len = (1 if self.config.pooling_strategy == "cls" else 0) + self.config.num_state_tokens + self.config.num_task_tokens
-        elif self.config.obs == 'rgb':
-            self.config.seq_len = (1 if self.config.pooling_strategy == "cls" else 0) + self.config.num_state_tokens + self.config.num_task_tokens + self.config.num_rgb_tokens # TODO: rgb may disable state observations. This is not ideal for VLA-type tasks
         else:
-            raise NotImplementedError(f"Unexpected observation type: {self.config.obs}")
+            # Tokenized mode
+            # Calculate length of task embedding chunks 
+            if self.config.task_dim > 0:
+                 self.config.num_task_tokens = -(self.config.task_dim // -self.config.hidden_size) # ceil div
+            else:
+                 self.config.num_task_tokens = 0
+
+            # Calculate obs patch sizes. One token will share a number of observations (e.g. 16) to reduce sequence length
+            obs_dim = self.config.obs_shape['state'][0]
+            if self.config.num_state_obs_per_token > 1:
+                # ceil(obs_dim / num_state_obs_per_token)
+                self.config.num_state_tokens = -(obs_dim // -self.config.num_state_obs_per_token)
+                # Pad size: how many zeros to append so obs_dim is divisible by num_state_obs_per_token
+                self.config.obs_pad_len = self.config.num_state_tokens * self.config.num_state_obs_per_token - obs_dim
+            else: 
+                # Project each scalar in the observation vector to its own token
+                self.config.num_state_tokens = obs_dim
+                self.config.obs_pad_len = 0
+
+            if self.config.obs == 'rgb':
+                raise NotImplementedError("RGB Observations are not yet implemented with the TRM architecture.")
+                # TODO: check vision encoder token size(s). Just 1 512-dim token?
+                self.config.num_rgb_tokens = -(self.config.obs_shape['rgb'][0] // -self.config.hidden_size)
+
+            # Calculate total sequence length (+1 for [CLS] token at position 0)
+            if self.config.obs == 'state':
+                self.config.seq_len = (1 if self.config.pooling_strategy == "cls" else 0) + self.config.num_state_tokens + self.config.num_task_tokens
+            elif self.config.obs == 'rgb':
+                self.config.seq_len = (1 if self.config.pooling_strategy == "cls" else 0) + self.config.num_state_tokens + self.config.num_task_tokens + self.config.num_rgb_tokens # TODO: rgb may disable state observations. This is not ideal for VLA-type tasks
+            else:
+                raise NotImplementedError(f"Unexpected observation type: {self.config.obs}")
         
         super().__init__()
         self.inner = TRMInner(self.config).to(torch.device('cuda'))
