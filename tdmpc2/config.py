@@ -95,7 +95,7 @@ class Config:
 	# logging
 	wandb_project: str = "newt_trm"							# wandb project name
 	wandb_entity: str = "keagan"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = "dmc_trm"				# wandb run name (defaults to <seed>)
+	wandb_run_name: Optional[str] = "dmc_trm_nontokenized"	# wandb run name (defaults to <seed>)
 	enable_wandb: bool = True								# whether to enable wandb logging
 
 	# misc
@@ -115,7 +115,8 @@ class Config:
 	L_layers: int = 2
 	num_state_obs_per_token: int = 16						# Number of values in the state observation vector to place in each token. Affects the sequence length
 	pooling_strategy: str = "mean"							# pooling strategy for transformer encoder output, one of ["mean", "cls"]
-	use_trm_hidden_state_simnorm: bool = True				# whether to apply SimNorm to the hidden state before pooling
+	use_trm_hidden_state_simnorm: bool = False				# whether to apply SimNorm to the hidden state before pooling
+	trm_tokenize: bool = False								# Whether to tokenize obs into patches; False = flat mode (obs+task concatenated, no attention/mixer)
 
 	# Transformer config
 	hidden_size: int = 512									# Size for z and y in the TRM, normally set to latent_dim
