@@ -131,12 +131,17 @@ class TRMInner(nn.Module):
         self.embed_scale = 1.0 # math.sqrt(self.config.hidden_size)
         embed_init_std = 0.02 # 1.0 / self.embed_scale
 
-        # State observation: if tokenized, project each patch of num_state_obs_per_token scalars to hidden_size
+        # State observation: if tokenized, project each patch to hidden_size; if flat, project concatenated input
         # self.embed_tokens = CastedEmbedding(self.config.num_tasks, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         if self.tokenize:
             self.embed_state_obs = CastedLinear(self.config.num_state_obs_per_token, self.config.hidden_size, bias=False)
             with torch.no_grad():
                 trunc_normal_init_(self.embed_state_obs.weight, std=embed_init_std)
+        else:
+            # Flat mode: project concatenated obs+task vector down to hidden_size (bottleneck)
+            self.input_proj = CastedLinear(self.config.flat_dim, self.config.hidden_size, bias=False).to(device="cuda")
+            with torch.no_grad():
+                trunc_normal_init_(self.input_proj.weight, std=embed_init_std)
 
         # Task embedding projection (tokenized mode only)
         # If task_dim == hidden_size: use the CLIP token directly as 1 token (no projection)
@@ -155,8 +160,10 @@ class TRMInner(nn.Module):
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False).to(device="cuda")
         with torch.no_grad():
             trunc_normal_init_(self.lm_head.weight, std=0.02)  # Match Newt's default nn.Linear init
+        self.lm_head_ln   = nn.LayerNorm(self.config.latent_dim).to(device="cuda")  # LayerNorm before SimNorm, matching baseline NormedLinear
         self.lm_head_norm = SimNorm(self.config)  # SimNorm to match baseline encoder output distribution
         if self.config.use_trm_hidden_state_simnorm:
+            self.embed_ln   = nn.LayerNorm(self.config.hidden_size).to(device="cuda")  # LayerNorm before SimNorm on input embeddings
             self.embed_norm = SimNorm(self.config)  # SimNorm on input to help match the output distribution
         self.q_head       = CastedLinear(self.config.hidden_size, 2, bias=True).to(device="cuda") # TODO: check q_head needs 2 outputs or just 1 for halt logit
         
@@ -206,15 +213,16 @@ class TRMInner(nn.Module):
         if not input.is_floating_point():
             raise NotImplementedError("TRM currently only supports continuous inputs.")
 
-        # Flat mode: concatenate raw obs and task embeddings, recurse, then project with lm_head
+        # Flat mode: concatenate raw obs and task embeddings, project to hidden_size, then recurse
         if not self.tokenize:
-            parts = [input]  # (batch_size, obs_dim)
+            obs = [input]  # (batch_size, obs_dim)
             if self.config.task_dim > 0:
                 task_vec = self.task_emb_init[task_embedding.long()]  # (batch_size, task_dim)
-                parts.append(task_vec)
-            out = torch.cat(parts, dim=-1).to(self.forward_dtype)  # (batch_size, flat_dim)
+                obs.append(task_vec)
+            out = torch.cat(obs, dim=-1).to(self.forward_dtype)  # (batch_size, flat_dim)
+            out = self.input_proj(out)  # (batch_size, hidden_size) — bottleneck projection
             if self.config.use_trm_hidden_state_simnorm:
-                out = self.embed_norm(out) - (1.0 / self.config.simnorm_dim)
+                out = self.embed_norm(self.embed_ln(out)) - (1.0 / self.config.simnorm_dim)
             return out
 
         # Tokenized mode: patch obs (and task embedding) into tokens
@@ -264,7 +272,7 @@ class TRMInner(nn.Module):
         out = (content * self.embed_scale).to(self.forward_dtype)
 
         if self.config.use_trm_hidden_state_simnorm:
-            out = self.embed_norm(out) - (1.0 / self.config.simnorm_dim)
+            out = self.embed_norm(self.embed_ln(out)) - (1.0 / self.config.simnorm_dim)
 
         # Prepend [CLS] token at position 0 (only when using CLS pooling)
         if self.config.pooling_strategy == "cls":
@@ -334,7 +342,7 @@ class TRMInner(nn.Module):
         else:
             # Mean pooling over all sequence positions
             pooled = z_H.mean(dim=1)  # (batch_size, hidden_size)
-        output = self.lm_head_norm(self.lm_head(pooled).to(torch.float32))  # (batch_size, latent_dim), SimNorm-normalized
+        output = self.lm_head_norm(self.lm_head_ln(self.lm_head(pooled).to(torch.float32)))  # (batch_size, latent_dim), LayerNorm + SimNorm
         q_logits = self.q_head(pooled).to(torch.float32)  # (batch_size, 2)
         return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
 
@@ -354,7 +362,7 @@ class TRM(nn.Module):
             obs_dim = self.config.obs_shape['state'][0]
             flat_dim = obs_dim + (self.config.task_dim if self.config.task_dim > 0 else 0)
             self.config.flat_dim = flat_dim
-            self.config.hidden_size = flat_dim  # SwiGLU channel MLP size = flat vector length
+            self.config.hidden_size = self.config.enc_dim  # Bottleneck: project flat_dim to enc_dim; SwiGLU operates on enc_dim
             self.config.seq_len = 1             # not used in flat mode
             self.config.num_task_tokens = 0
             self.config.num_state_tokens = 0
