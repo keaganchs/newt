@@ -84,9 +84,9 @@ class CastedLinear(nn.Module):
                  out_features: int,
                  bias: bool):
         super().__init__()
-        # Truncated LeCun normal init
+        # Match Newt's default nn.Linear init (std=0.02) for consistency with world model weight_init
         self.weight = nn.Parameter(
-            trunc_normal_init_(torch.empty((out_features, in_features)), std=1.0 / (in_features ** 0.5))
+            trunc_normal_init_(torch.empty((out_features, in_features)), std=0.02)
         )
         self.bias = None
         if bias:
