@@ -29,7 +29,8 @@ PYTHON_SCRIPT="$SCRIPT_DIR/tdmpc2/train.py"
 python3 $PYTHON_SCRIPT \
     task="dmcontrol" \
     num_envs=21 \
-    use_trm_encoder=True \
+    use_trm_encoder=False \
+    use_trm_dynamics=True \
     use_task_embedding=True \
     obs="state" \
     model_size="S" \
@@ -42,5 +43,5 @@ python3 $PYTHON_SCRIPT \
     enable_wandb=True \
     H_cycles=1 \
     L_cycles=1 \
-    num_state_obs_per_token=128 \
+    num_state_obs_per_token=64 \
     pooling_strategy="mean" \
