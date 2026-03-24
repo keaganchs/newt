@@ -30,7 +30,7 @@ class Config:
 	eval_episodes: int = 2									# number of evaluation episodes per parallel environment
 
 	# training
-	steps: int = 100_000_000								# total environment steps to train for
+	steps: int = 1_000_000								# total environment steps to train for
 	batch_size: int = 128									# effective batch size across all devices
 	utd: float = 0.075										# update-to-data ratio, i.e., model updates per environment step
 	reward_coef: float = 0.1								# coefficient for reward prediction loss
@@ -94,9 +94,9 @@ class Config:
 
 	# logging
 	wandb_project: str = "newt_trm"							# wandb project name
-	wandb_entity: str = "keagan"							# wandb entity (user) name
+	wandb_entity: str = "newttrm"							# wandb entity (user) name
 	wandb_run_name: Optional[str] = "dmc_trm"				# wandb run name (defaults to <seed>)
-	enable_wandb: bool = True								# whether to enable wandb logging
+	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
 	multiproc: bool = True									# whether to use multiple GPUs (will use all visible GPUs)
@@ -108,8 +108,12 @@ class Config:
 	seed: int = 1											# random seed
 
 	# TRM config, most options are overridden by `model_size` or `trm_size` if specified
-	use_trm_encoder: bool = True							# whether to use TRM encoder for state observations
-	mlp_t: bool = True 									# use mlp on L instead of transformer
+	use_trm_encoder: bool = False							# whether to use TRM encoder for state observations
+	use_trm_dynamics: bool = True							# whether to use a TRM for the dynamics model
+	mlp_t: bool = True 										# use mlp on L instead of transformer
+	trm_mlp_mixer_type: str = "swiglu"						# type of MLP mixer for the TRM, one of ["swiglu", "simnorm"]
+	trm_mlp_output_type: str = "swiglu"						# type of MLP for projecting TRM output, one of ["swiglu", "simnorm"]	
+
 	H_cycles: int = 2
 	L_cycles: int = 6
 	L_layers: int = 2
@@ -198,7 +202,7 @@ def parse_cfg(cfg):
 				cfg[k] = v
 
 		# TRM size
-		if cfg.use_trm_encoder:
+		if cfg.use_trm_encoder or cfg.use_trm_dynamics:
 			if cfg.get('trm_size', None) is None:
 				cfg['trm_size'] = cfg.model_size
 			assert cfg.trm_size in TRM_SIZE.keys(), \

@@ -36,7 +36,7 @@ class WorldModel(nn.Module):
 			for i in range(len(cfg.action_dims)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
 		self._encoder = layers.enc(cfg)
-		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=layers.SimNorm(cfg))
+		self._dynamics = layers.dyn(cfg)
 		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], max(cfg.num_bins, 1), act=None)
 		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, [], 2*cfg.action_dim, act=None)
 		self._Qs = layers.QOnlineTargetEnsemble(cfg)
@@ -119,6 +119,39 @@ class WorldModel(nn.Module):
 		emb = emb.expand(*x_batch_shape, E)
 		return torch.cat([x, emb], dim=-1)
 
+
+	def reshape_task_ids(self, task, batch_shape):
+		"""
+		Reshapes task IDs to match obs dimensions. Used by the Tiny Recursive Model (TRM).
+
+		Returns a flattened tensor of task IDs with shape #TODO
+		"""
+		if isinstance(task, int):
+			# TODO: double-check 
+			# task = torch.full(batch_shape, task, device=_obs.device)
+			task = torch.tensor([task], device="cuda") 
+		
+		# Broadcast task to match obs batch dimensions
+		while task.ndim < len(batch_shape):
+			task = task.unsqueeze(-1)
+			
+		try:
+			task = task.expand(batch_shape)
+		except RuntimeError:
+			if task.shape[0] > batch_shape[0] and task.ndim > 0:
+				task = task[:batch_shape[0]] 
+				task = task.expand(batch_shape)
+			elif task.numel() == int(torch.tensor(batch_shape).prod().item()):
+				task = task.reshape(batch_shape)
+			else:
+				raise ValueError(f"Incompatible task shape: got {task.shape}, expected broadcastable to {batch_shape}")
+
+		assert task.shape == batch_shape, f"Task shape {task.shape} must match obs batch shape {batch_shape}"
+		
+		# Flatten and return
+		return task.reshape(-1)
+
+
 	def encode(self, obs, task):
 		"""
 		Encodes an observation into its latent representation. 
@@ -136,26 +169,7 @@ class WorldModel(nn.Module):
 			# Flatten observations to [B, obs_dim]
 			batch_shape = _obs.shape[:-1]
 			_obs_flat = _obs.view(-1, _obs.shape[-1])
-			
-			if isinstance(task, int):
-				# TODO: double-check 
-				# task = torch.full(batch_shape, task, device=_obs.device)
-				task = torch.tensor([task], device=_obs.device) 
-			
-			# Broadcast task to match obs batch dimensions
-			if task.ndim < len(batch_shape):
-				view_shape = [1] * (len(batch_shape) - task.ndim) + list(task.shape)
-				task = task.view(*view_shape).expand(batch_shape)
-			elif task.shape != batch_shape:
-				if task.shape[0] > batch_shape[0]:
-					task = task[:batch_shape[0]] 
-				# Try direct broadcast/expand
-				if task.shape != batch_shape:
-					task = task.expand(batch_shape)
-
-			assert task.shape == batch_shape, f"Task shape {task.shape} must match obs batch shape {batch_shape}"
-			
-			_task_flat = task.reshape(-1)
+			_task_flat = self.reshape_task_ids(task, batch_shape)
 
 			z = {"inputs": _obs_flat, "task_embedding": _task_flat}
 
@@ -186,9 +200,19 @@ class WorldModel(nn.Module):
 		"""
 		Predicts the next latent state given the current latent state and action.
 		"""
-		z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
-		return self._dynamics(z)
+		if self.cfg.use_trm_dynamics:
+			obs = torch.cat([z, a], dim=-1)
+			_obs_flat = obs.view(-1, obs.shape[-1])
+			_task_flat = self.reshape_task_ids(task, obs.shape[:-1]) 
+			
+			x = {"inputs": _obs_flat, "task_embedding": _task_flat}
+			init_carry=self._dynamics.initial_carry(x)
+			out = self._dynamics(init_carry, x)[1]['logits']
+			return out.view(*obs.shape[:-1], -1)
+		else:
+			z = self.task_emb(z, task)
+			z = torch.cat([z, a], dim=-1)
+			return self._dynamics(z)
 
 	def reward(self, z, a, task):
 		"""

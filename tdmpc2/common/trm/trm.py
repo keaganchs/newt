@@ -47,17 +47,20 @@ class TRMBlock(nn.Module):
         
         # MLP or Attention layers
         if self.config.mlp_t:
-            self.mlp_t = SwiGLU(
-                hidden_size=self.config.seq_len, # L
-                expansion=config.expansion,
-            )
-
-            # Pure MLP version
-            # self.mlp_t = mlp(
-            #     in_dim=self.config.seq_len, # L
-            #     mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
-            #     out_dim=self.config.seq_len,
-            # )
+            if self.config.trm_mlp_mixer_type == "swiglu":
+                self.mlp_t = SwiGLU(
+                    hidden_size=self.config.seq_len, # L
+                    expansion=config.expansion,
+                )
+            elif self.config.trm_mlp_mixer_type == "simnorm":
+                self.mlp_t = mlp(
+                    in_dim=self.config.seq_len, # L
+                    mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
+                    out_dim=self.config.seq_len,
+                    act=SimNorm(self.config)
+                )
+            else:
+                raise ValueError(f"Unsupported TRM MLP mixer type: {self.config.trm_mlp_mixer_type}")
         else:
             self.self_attn = Attention(
                 hidden_size=self.config.hidden_size,
@@ -66,17 +69,21 @@ class TRMBlock(nn.Module):
                 num_key_value_heads=self.config.num_heads,
                 causal=False
             )
-        self.mlp = SwiGLU(
-            hidden_size=config.hidden_size,
-            expansion=config.expansion,
-        )
-
-        # Pure MLP version
-        # self.mlp = mlp(
-        #     in_dim=self.config.hidden_size,
-        #     mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
-        #     out_dim=self.config.hidden_size,
-        # )
+        if self.config.trm_mlp_output_type == "swiglu":
+            self.mlp = SwiGLU(
+                hidden_size=config.hidden_size,
+                expansion=config.expansion,
+            )
+        elif self.config.trm_mlp_output_type == "simnorm":
+            self.mlp = mlp(
+                in_dim=self.config.hidden_size,
+                mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
+                out_dim=self.config.hidden_size,
+                act=SimNorm(self.config)
+            )
+        else:
+            raise ValueError(f"Unsupported TRM output MLP type: {self.config.trm_mlp_output_type}")
+        
         self.norm_eps = self.config.rms_norm_eps
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -126,7 +133,7 @@ class TRMInner(nn.Module):
         embed_init_std = 0.02 # 1.0 / self.embed_scale
 
         # State observation: project each patch of num_state_obs_per_token scalars to hidden_size
-        # self.embed_tokens = CastedEmbedding(self.config.num_tasks, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+        # self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
         self.embed_state_obs = CastedLinear(self.config.num_state_obs_per_token, self.config.hidden_size, bias=False)
         with torch.no_grad():
             trunc_normal_init_(self.embed_state_obs.weight, std=embed_init_std)
@@ -177,11 +184,9 @@ class TRMInner(nn.Module):
         # Reasoning Layers
         self.L_level = TRMReasoningModule(layers=[TRMBlock(self.config).to(device="cuda") for _ in range(self.config.L_layers)])
 
-        # Initial carry states (zero-init: carry is recreated fresh every encode() call,
-        # so non-zero init just adds fixed noise that overwhelms the input signal)
-        # TODO: test trunc_normal_init_ with updated std 
-        self.H_init = nn.Buffer(torch.zeros(self.config.hidden_size, dtype=self.forward_dtype, device="cuda"), persistent=True)
-        self.L_init = nn.Buffer(torch.zeros(self.config.hidden_size, dtype=self.forward_dtype, device="cuda"), persistent=True)
+        # Initial states
+        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02).to(device="cuda"), persistent=True)
+        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=0.02).to(device="cuda"), persistent=True)
 
         # [CLS] token: learnable aggregation token prepended to position 0
         if self.config.pooling_strategy == "cls":
@@ -307,8 +312,14 @@ class TRMInner(nn.Module):
 class TRM(nn.Module):
     """Tiny Recursion Model (TRM) with Adaptive Computation Time (ACT)"""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, model_type="encoder"):
+        """Initializes the TRM model
+        Args:
+            config: Config object containing model hyperparameters
+            model_type: "encoder" or "dynamics", used to determine input/output dimensions
+        """
         self.config = config
+        self.model_type = model_type
 
         # Calculate length of task embedding chunks 
         if self.config.task_dim > 0:
@@ -317,7 +328,13 @@ class TRM(nn.Module):
              self.config.num_task_tokens = 0
 
         # Calculate obs patch sizes. One token will share a number of observations (e.g. 16) to reduce sequence length
-        obs_dim = self.config.obs_shape['state'][0]
+        if self.model_type == "encoder":
+            obs_dim = self.config.obs_shape['state'][0]
+        elif self.model_type == "dynamics":
+            obs_dim = self.config.latent_dim + self.config.action_dim
+        else:
+            raise ValueError(f"Unsupported model type: {self.model_type}")
+
         if self.config.num_state_obs_per_token > 1:
             # ceil(obs_dim / num_state_obs_per_token)
             self.config.num_state_tokens = -(obs_dim // -self.config.num_state_obs_per_token)
@@ -333,7 +350,7 @@ class TRM(nn.Module):
             # TODO: check vision encoder token size(s). Just 1 512-dim token?
             self.config.num_rgb_tokens = -(self.config.obs_shape['rgb'][0] // -self.config.hidden_size)
 
-        # Calculate total sequence length (+1 for [CLS] token at position 0)
+        # Calculate total sequence length
         if self.config.obs == 'state':
             self.config.seq_len = (1 if self.config.pooling_strategy == "cls" else 0) + self.config.num_state_tokens + self.config.num_task_tokens
         elif self.config.obs == 'rgb':

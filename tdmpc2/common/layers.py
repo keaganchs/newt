@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class SimNorm(nn.Module):
 	"""
 	Simplicial normalization.
@@ -164,7 +163,7 @@ def enc(cfg, out={}):
 	"""
 	if cfg.use_trm_encoder:
 		from common.trm import TRM
-		out['state'] = TRM(cfg).to(torch.device('cuda'))
+		out['state'] = TRM(cfg, model_type="encoder").to(torch.device('cuda'))
 	else:
 		if cfg.obs == 'state':
 			out['state'] = mlp(cfg.obs_shape['state'][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
@@ -173,6 +172,19 @@ def enc(cfg, out={}):
 		else:
 			raise NotImplementedError(f"Unexpected observation type: {cfg.obs}")
 	return nn.ModuleDict(out)
+
+
+def dyn(cfg, out={}):
+	"""
+	Returns a dynmaics model for TD-MPC2.
+	"""
+	if cfg.use_trm_dynamics:
+		from common.trm import TRM
+		out = TRM(cfg, model_type="dynamics").to(torch.device('cuda'))
+	else:
+		out = mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=SimNorm(cfg))
+
+	return out
 
 
 def api_model_conversion(target_state_dict, source_state_dict):
