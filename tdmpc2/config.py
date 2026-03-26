@@ -93,9 +93,9 @@ class Config:
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
 
 	# logging
-	wandb_project: str = "newt_trm"							# wandb project name
-	wandb_entity: str = "newttrm"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = "dmc_trm"				# wandb run name (defaults to <seed>)
+	wandb_project: str = "TRM Dynamics"							# wandb project name
+	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
+	wandb_run_name: Optional[str] = "dmc_trmd_mlp"				# wandb run name (defaults to <seed>)
 	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
