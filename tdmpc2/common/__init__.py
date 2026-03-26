@@ -27,7 +27,7 @@ MODEL_SIZE = {
 
 TRM_SIZE = {
 	'S':   {'hidden_size': 64, # 32+att=>~39k parameters; 128+att=>450k parameters 
-		  	'num_heads': 8,
+		  	'num_heads': 2,
 			'expansion': 4.0,
 			'H_cycles': 2,
 			'L_cycles': 6,
