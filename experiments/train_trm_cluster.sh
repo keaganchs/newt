@@ -7,7 +7,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=3
-#SBATCH --mem-per-cpu=6000
+#SBATCH --mem-per-cpu=5500
 #SBATCH --time=23:59:00
 #SBATCH --gres=gpu:1
 
@@ -34,7 +34,7 @@ python3 $PYTHON_SCRIPT \
     use_task_embedding=True \
     obs="state" \
     model_size="S" \
-    mlp_t=False \
+    mlp_t=True \
     halt_max_steps=0 \
     halt_exploration_prob=0 \
     wandb_project="newt_trm" \
@@ -45,3 +45,6 @@ python3 $PYTHON_SCRIPT \
     L_cycles=1 \
     num_state_obs_per_token=64 \
     pooling_strategy="mean" \
+    hidden_size=64 \
+    num_heads=2 \
+    latent_dim=128 \
