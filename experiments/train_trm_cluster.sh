@@ -37,9 +37,9 @@ python3 $PYTHON_SCRIPT \
     mlp_t=True \
     halt_max_steps=0 \
     halt_exploration_prob=0 \
-    wandb_project="newt_trm" \
-    wandb_entity="keagan" \
-    wandb_run_name="dmc_newt_s" \
+    wandb_project="TRM Dynamics" \
+    wandb_entity="trm-dynamics" \
+    wandb_run_name="dmc_trmd_s" \
     enable_wandb=True \
     H_cycles=1 \
     L_cycles=1 \
