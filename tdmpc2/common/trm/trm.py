@@ -86,6 +86,7 @@ class TRMBlock(nn.Module):
         
         self.norm_eps = self.config.rms_norm_eps
 
+    @torch.compile()
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
         # B, L, D = hidden_states.shape
         # Post Norm. Adding .contiguous() gives a small speedup to the matrix multiplications
