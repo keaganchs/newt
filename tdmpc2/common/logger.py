@@ -81,12 +81,14 @@ def cfg_to_group(cfg, return_list=False):
 		run_type = "trmd" if cfg.use_trm_dynamics else "trme"
 		mixer_type = "att" if not cfg.mlp_t else "mlp"
 		latent_dim = f"{cfg.latent_dim}ld"
-		lst = base.extend([run_type, mixer_type, latent_dim])
+		base.extend([run_type, mixer_type, latent_dim])
 	# Newt groups
 	else:
 		run_type = "newt"
 		size = cfg.model_size if cfg.model_size else "custom"
-		lst = base.extend([run_type, size])
+		base.extend([run_type, size])
+
+	lst = base
 		
 	# Ensure strings are valid:
 	lst = [re.sub("[^0-9a-zA-Z]+", "-", str(s)) for s in lst]
