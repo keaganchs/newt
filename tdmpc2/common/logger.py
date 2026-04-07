@@ -75,7 +75,22 @@ def cfg_to_group(cfg, return_list=False):
 	Return a wandb-safe group name for logging.
 	Optionally returns group name as list.
 	"""
-	lst = [cfg.task, re.sub("[^0-9a-zA-Z]+", "-", cfg.exp_name)]
+	base = [cfg.task]
+	# TRM groups
+	if cfg.use_trm_dynamics or cfg.use_trm_encoder:
+		run_type = "trmd" if cfg.use_trm_dynamics else "trme"
+		mixer_type = "att" if not cfg.mlp_t else "mlp"
+		latent_dim = f"{cfg.latent_dim}ld"
+		lst = base.extend([run_type, mixer_type, latent_dim])
+	# Newt groups
+	else:
+		run_type = "newt"
+		size = cfg.model_size if cfg.model_size else "custom"
+		lst = base.extend([run_type, size])
+		
+	# Ensure strings are valid:
+	lst = [re.sub("[^0-9a-zA-Z]+", "-", str(s)) for s in lst]
+
 	return lst if return_list else "-".join(lst)
 
 

@@ -6,6 +6,7 @@ from typing import Optional, Any
 
 import json
 import hydra
+import datetime
 from termcolor import colored
 from omegaconf import OmegaConf
 
@@ -112,7 +113,7 @@ class Config:
 	use_trm_dynamics: bool = True							# whether to use a TRM for the dynamics model
 	mlp_t: bool = True 										# use mlp on L instead of transformer
 	trm_mlp_mixer_type: str = "swiglu"						# type of MLP mixer for the TRM, one of ["swiglu", "simnorm"]
-	trm_mlp_output_type: str = "swiglu"						# type of MLP for projecting TRM output, one of ["swiglu", "simnorm"]	
+	trm_mlp_output_type: str = "swiglu"					# type of MLP for projecting TRM output, one of ["swiglu", "simnorm"]	
 
 	H_cycles: int = 2
 	L_cycles: int = 6
@@ -187,7 +188,7 @@ def parse_cfg(cfg):
 		cli_overrides = set()
 
 	# Convenience
-	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / str(cfg.seed) / cfg.exp_name
+	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / cfg.wandb_run_name / str(cfg.seed) if cfg.enable_wandb else Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / str(cfg.seed) / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 	cfg.task_title = cfg.task.replace("-", " ").title()
 	cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins-1)  # Bin size for discrete regression
 
