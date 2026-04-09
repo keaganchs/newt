@@ -302,9 +302,15 @@ class TRMInner(nn.Module):
         if self.config.pooling_strategy == "cls":
             # [CLS] token at position 0
             pooled = z_H[:, 0]  # (batch_size, hidden_size)
-        else:
+        elif self.config.pooling_strategy == "mean":
             # Mean pooling over all sequence positions
             pooled = z_H.mean(dim=1)  # (batch_size, hidden_size)
+        elif self.config.pooling_strategy == "mean_obs_only":
+            # Mean pooling over only the observation tokens (exclude task tokens and [CLS] token if present)
+            pooled = z_H[:, :-self.config.num_task_tokens].mean(dim=1)  # (batch_size, hidden_size)
+        else:
+            raise ValueError(f"Unsupported pooling strategy: {self.config.pooling_strategy}")
+            
         output = self.lm_head_norm(self.lm_head(pooled).to(torch.float32))  # (batch_size, latent_dim), SimNorm-normalized
         q_logits = self.q_head(pooled).to(torch.float32)  # (batch_size, 2)
         return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
