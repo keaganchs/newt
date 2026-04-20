@@ -196,23 +196,42 @@ class WorldModel(nn.Module):
 				out = out[1]
 			return out
 
-	def next(self, z, a, task):
+	def next(self, z, a, task, carry=None, return_carry=False):
 		"""
-		Predicts the next latent state given the current latent state and action.
+		Predict the next latent state given current latent state and action.
+
+		When TRM dynamics are enabled, callers can pass and receive `carry` to
+		preserve the recursive state across timesteps in a trajectory rollout.
 		"""
 		if self.cfg.use_trm_dynamics:
 			obs = torch.cat([z, a], dim=-1)
 			_obs_flat = obs.view(-1, obs.shape[-1])
-			_task_flat = self.reshape_task_ids(task, obs.shape[:-1]) 
-			
+			_task_flat = self.reshape_task_ids(task, obs.shape[:-1])
+
 			x = {"inputs": _obs_flat, "task_embedding": _task_flat}
-			init_carry=self._dynamics.initial_carry(x)
-			out = self._dynamics(init_carry, x)[1]['logits']
-			return out.view(*obs.shape[:-1], -1)
+			if carry is None:
+				carry = self._dynamics.initial_carry(x)
+			else:
+				# Keep carry persistent across trajectory steps; only initialize/reset
+				# at trajectory boundaries (when caller passes carry=None).
+				carry = type(carry)(
+					inner_carry=carry.inner_carry,
+					steps=carry.steps,
+					halted=torch.zeros_like(carry.halted),
+					current_data=carry.current_data,
+				)
+			carry, outputs = self._dynamics(carry, x)
+			out = outputs['logits'].view(*obs.shape[:-1], -1)
+			if return_carry:
+				return out, carry
+			return out
 		else:
 			z = self.task_emb(z, task)
 			z = torch.cat([z, a], dim=-1)
-			return self._dynamics(z)
+			out = self._dynamics(z)
+			if return_carry:
+				return out, None
+			return out
 
 	def reward(self, z, a, task):
 		"""

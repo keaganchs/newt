@@ -182,7 +182,14 @@ def dyn(cfg, out={}):
 		from common.trm import TRM
 		out = TRM(cfg, model_type="dynamics").to(torch.device('cuda'))
 	else:
-		out = mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=SimNorm(cfg))
+		# out = mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=SimNorm(cfg))
+		from common.trm.trm_layers import SwiGLU, CastedLinear
+		# down_proj = CastedLinear(in_features=(cfg.latent_dim + cfg.action_dim + cfg.task_dim), out_features=cfg.enc_dim, bias=False)
+		swiglu = SwiGLU(hidden_size=(cfg.latent_dim + cfg.action_dim + cfg.task_dim), expansion=cfg.expansion)
+		lm_head = CastedLinear(in_features=(cfg.latent_dim + cfg.action_dim + cfg.task_dim), out_features=cfg.latent_dim, bias=False)
+		lm_head_norm = SimNorm(cfg)
+		
+		out = nn.Sequential(swiglu, lm_head, lm_head_norm).to(torch.device('cuda'))
 
 	return out
 

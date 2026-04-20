@@ -7,7 +7,7 @@ import torch
 MODEL_SIZE = {
 	'S':   {'enc_dim': 128, # encoder ~67k parameters; 1.3M total
 		  	'mlp_dim': 256,
-		  	'latent_dim': 384,
+		  	'latent_dim': 128,
 		  	'num_enc_layers': 2,
 			'num_q': 3},
 	'B':   {'enc_dim': 256,
@@ -26,13 +26,13 @@ MODEL_SIZE = {
 }
 
 TRM_SIZE = {
-	'S':   {'hidden_size': 64, # 32+att=>~39k parameters; 128+att=>450k parameters 
+	'S':   {'hidden_size': 16, # 32+att=>~39k parameters; 128+att=>450k parameters 
 		  	'num_heads': 2,
 			'expansion': 4.0,
-			'H_cycles': 2,
-			'L_cycles': 6,
+			'H_cycles': 1,
+			'L_cycles': 2,
 			'L_layers': 2,
-			'latent_dim': 384,
+			'latent_dim': 16,
 			'num_enc_layers': 2,
 			'num_state_obs_per_token': 16},
 	'B':   {'hidden_size': 512, # 256+att=>~1.6M parameters

@@ -147,9 +147,10 @@ class TDMPC2(torch.nn.Module):
 		"""Estimate value of a trajectory starting at latent state z and executing given actions."""
 		G = torch.zeros(self.cfg.num_envs, self.cfg.num_samples, 1, dtype=torch.float32, device=z.device)
 		discount = torch.ones(self.cfg.num_envs, self.cfg.num_samples, 1, dtype=torch.float32, device=z.device)
+		carry = None
 		for t in range(self.cfg.horizon):
 			reward = math.two_hot_inv(self.model.reward(z, actions[:, t], task), self.cfg)
-			z = self.model.next(z, actions[:, t], task)
+			z, carry = self.model.next(z, actions[:, t], task, carry=carry, return_carry=True)
 			G = G + discount * reward
 			discount_update = self.discount[task].view(-1, 1, 1)
 			discount = discount * discount_update
@@ -163,10 +164,11 @@ class TDMPC2(torch.nn.Module):
 		pi_actions = torch.empty(self.cfg.num_envs, self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
 		_z = z.unsqueeze(1).repeat(1, self.cfg.num_pi_trajs, 1).view(self.cfg.num_envs * self.cfg.num_pi_trajs, -1)
 		_task = task.unsqueeze(1).repeat(1, self.cfg.num_pi_trajs).view(self.cfg.num_envs * self.cfg.num_pi_trajs)
+		carry = None
 		for t in range(self.cfg.horizon - 1):
 			a, _ = self.model.pi(_z, _task)
 			pi_actions[:, t] = a.view(self.cfg.num_envs, self.cfg.num_pi_trajs, self.cfg.action_dim)
-			_z = self.model.next(_z, a, _task)
+			_z, carry = self.model.next(_z, a, _task, carry=carry, return_carry=True)
 		a, _ = self.model.pi(_z, _task)
 		pi_actions[:, -1] = a.view(self.cfg.num_envs, self.cfg.num_pi_trajs, self.cfg.action_dim)
 		return pi_actions, z
@@ -350,8 +352,9 @@ class TDMPC2(torch.nn.Module):
 		z = self.model.encode(obs[0], task[0])
 		zs[0] = z
 		consistency_loss = 0
+		carry = None
 		for t, (_action, _next_z, _task) in enumerate(zip(action.unbind(0), next_z.unbind(0), task.unbind(0))):
-			z = self.model.next(z, _action, _task)
+			z, carry = self.model.next(z, _action, _task, carry=carry, return_carry=True)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.rho[t]
 			zs[t+1] = z
 
