@@ -1,6 +1,8 @@
 #!/bin/bash
 
-echo "Running Newt M experiments"
+PROJECT_ROOT="$(dirname "$(dirname "$(dirname "$(realpath "$0")")")")"
 
-sbatch "$SLURM_SUBMIT_DIR/experiments/paper/newt_m_l/newt_m.sh"
-# sbatch "$SLURM_SUBMIT_DIR/experiments/paper/newt_m_l/newt_l.sh"
+echo "Running Newt M experiments from ${PROJECT_ROOT}"
+
+sbatch "${PROJECT_ROOT}/experiments/paper/newt_m_l/newt_m.sh"
+sbatch "${PROJECT_ROOT}/experiments/paper/newt_m_l/newt_l.sh"
