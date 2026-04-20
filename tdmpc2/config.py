@@ -119,7 +119,7 @@ class Config:
 	L_cycles: int = 6
 	L_layers: int = 2
 	num_state_obs_per_token: int = 16						# Number of values in the state observation vector to place in each token. Affects the sequence length
-	pooling_strategy: str = "mean"							# pooling strategy for transformer encoder output, one of ["mean", "cls"]
+	pooling_strategy: str = "mean"					# pooling strategy for transformer encoder output, one of ["mean", "cls", "mean_obs_only"]
 	use_trm_hidden_state_simnorm: bool = True				# whether to apply SimNorm to the hidden state before pooling
 
 	# Transformer config
@@ -188,7 +188,7 @@ def parse_cfg(cfg):
 		cli_overrides = set()
 
 	# Convenience
-	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / cfg.wandb_run_name / str(cfg.seed) if cfg.enable_wandb else Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / str(cfg.seed) / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+	cfg.work_dir = Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / cfg.wandb_run_name / str(cfg.seed) if cfg.enable_wandb else Path(hydra.utils.get_original_cwd()) / 'logs' / cfg.task / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") / str(cfg.seed) 
 	cfg.task_title = cfg.task.replace("-", " ").title()
 	cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins-1)  # Bin size for discrete regression
 
