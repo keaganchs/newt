@@ -31,7 +31,7 @@ class Config:
 	eval_episodes: int = 2									# number of evaluation episodes per parallel environment
 
 	# training
-	steps: int = 100_000_000								# total environment steps to train for
+	steps: int = 30_000_000								# total environment steps to train for
 	batch_size: int = 128									# effective batch size across all devices
 	utd: float = 0.075										# update-to-data ratio, i.e., model updates per environment step
 	reward_coef: float = 0.1								# coefficient for reward prediction loss
