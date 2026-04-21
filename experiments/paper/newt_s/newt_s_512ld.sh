@@ -5,8 +5,7 @@
 #SBATCH --error=log/out_and_err_%j.txt
 #SBATCH --partition=amd2
 #SBATCH --nodes=1
-#SBATCH --array=0-2
-#SBATCH --cpus-per-task=3
+#SBATCH --cpus-per-task=9
 #SBATCH --mem-per-cpu=5500
 #SBATCH --time=23:59:00
 #SBATCH --gres=gpu:1
@@ -26,8 +25,9 @@ mkdir -p log
 SCRIPT_DIR="$SLURM_SUBMIT_DIR"
 PYTHON_SCRIPT="$SCRIPT_DIR/tdmpc2/train.py"
 
-run_seed() {
-    local SEED="$SLURM_ARRAY_TASK_ID"
+SEEDS=(0 1 2)
+
+for SEED in "${SEEDS[@]}"; do
     python3 "$PYTHON_SCRIPT" \
         task="dmcontrol" \
         num_envs=21 \
@@ -40,7 +40,7 @@ run_seed() {
         wandb_run_name="dmc_newt_s_s${SEED}" \
         enable_wandb=True \
         seed="$SEED" \
-        latent_dim=512
-}
+        latent_dim=512 &
+done
 
-run_seed
+wait
