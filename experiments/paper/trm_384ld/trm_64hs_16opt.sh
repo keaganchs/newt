@@ -53,4 +53,4 @@ run_seed() {
         latent_dim=384
 }
 
-run_seed()
+run_seed
