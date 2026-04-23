@@ -96,7 +96,7 @@ class Config:
 	# logging
 	wandb_project: str = "TRM Dynamics"							# wandb project name
 	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = "dmc_trmd_mlp"				# wandb run name (defaults to <seed>)
+	wandb_run_name: Optional[str] = "dmc_trmd_mlp_s_16hs16ld_16opt_no_rec_swsw_jaxified_dynamic_graph"				# wandb run name (defaults to <seed>)
 	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
@@ -115,10 +115,10 @@ class Config:
 	trm_mlp_mixer_type: str = "swiglu"						# type of MLP mixer for the TRM, one of ["swiglu", "simnorm"]
 	trm_mlp_output_type: str = "swiglu"					# type of MLP for projecting TRM output, one of ["swiglu", "simnorm"]	
 
-	H_cycles: int = 2
-	L_cycles: int = 6
+	H_cycles: int = 1
+	L_cycles: int = 1
 	L_layers: int = 2
-	num_state_obs_per_token: int = 16						# Number of values in the state observation vector to place in each token. Affects the sequence length
+	num_state_obs_per_token: int = 8						# Number of values in the state observation vector to place in each token. Affects the sequence length
 	pooling_strategy: str = "mean"					# pooling strategy for transformer encoder output, one of ["mean", "cls", "mean_obs_only"]
 	use_trm_hidden_state_simnorm: bool = True				# whether to apply SimNorm to the hidden state before pooling
 

@@ -16,6 +16,7 @@ CONSOLE_FORMAT = [
 	("step", "I", "int"),
 	("episode_reward", "R", "float"),
 	("episode_score", "S", "float"),
+	("steps_per_second", "SPS", "float"),
 	("elapsed_time", "T", "time"),
 ]
 
