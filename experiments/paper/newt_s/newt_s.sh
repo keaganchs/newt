@@ -40,7 +40,7 @@ for SEED in "${SEEDS[@]}"; do
         wandb_run_name="dmc_newt_s_s${SEED}" \
         enable_wandb=True \
         seed="$SEED" \
-        latent_dim=384 # default &
+        latent_dim=384 &
 done
 
 wait
