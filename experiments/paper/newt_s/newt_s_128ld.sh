@@ -34,7 +34,7 @@ for SEED in "${SEEDS[@]}"; do
         use_trm_encoder=False \
         use_trm_dynamics=False \
         obs="state" \
-        model_size="s" \
+        model_size="S" \
         wandb_project="TRM Dynamics" \
         wandb_entity="trm-dynamics" \
         wandb_run_name="dmc_newt_s_s${SEED}" \
