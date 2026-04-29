@@ -5,6 +5,7 @@ from common import math, init
 from tensordict import TensorDict
 
 from common import layers
+from common.trm import TRMBatch
 
 
 class WorldModel(nn.Module):
@@ -171,10 +172,10 @@ class WorldModel(nn.Module):
 			_obs_flat = _obs.view(-1, _obs.shape[-1])
 			_task_flat = self.reshape_task_ids(task, batch_shape)
 
-			z = {"inputs": _obs_flat, "task_embedding": _task_flat}
+			x = TRMBatch(inputs=_obs_flat, task_embedding=_task_flat)
 
-			init_carry=self._encoder['state'].initial_carry(z)
-			out = self._encoder['state'](init_carry, z)[1]['logits']
+			init_carry=self._encoder['state'].initial_carry(x)
+			out = self._encoder['state'](init_carry, x)[1]['logits']
 
 			# TRM returns (B, latent_dim) from the [CLS] token
 			return out.view(*batch_shape, -1)
@@ -205,7 +206,8 @@ class WorldModel(nn.Module):
 			_obs_flat = obs.view(-1, obs.shape[-1])
 			_task_flat = self.reshape_task_ids(task, obs.shape[:-1]) 
 			
-			x = {"inputs": _obs_flat, "task_embedding": _task_flat}
+			x = TRMBatch(inputs=_obs_flat, task_embedding=_task_flat)
+			
 			init_carry=self._dynamics.initial_carry(x)
 			out = self._dynamics(init_carry, x)[1]['logits']
 			return out.view(*obs.shape[:-1], -1)

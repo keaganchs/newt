@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Optional
 from copy import deepcopy
 import math
 
@@ -93,6 +93,7 @@ class CastedLinear(nn.Module):
             # Zero init bias
             self.bias = nn.Parameter(torch.zeros((out_features, )))
 
+    @torch.compile(fullgraph=True)
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return F.linear(input, self.weight.to(input.dtype), bias=self.bias.to(input.dtype) if self.bias is not None else None)
 
@@ -115,6 +116,7 @@ class CastedEmbedding(nn.Module):
             trunc_normal_init_(torch.empty((num_embeddings, embedding_dim)), std=self.init_std)
         )
         
+    @torch.compile(fullgraph=True)
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return F.embedding(input, self.embedding_weight.to(self.cast_to))
 
@@ -139,6 +141,7 @@ class RotaryEmbedding(nn.Module):
         self.cos_cached = nn.Buffer(emb.cos(), persistent=False)
         self.sin_cached = nn.Buffer(emb.sin(), persistent=False)
 
+    @torch.compile(fullgraph=True)
     def forward(self):
         return self.cos_cached, self.sin_cached
 
@@ -156,13 +159,14 @@ class SwiGLU(nn.Module):
         self.gate_up_proj = CastedLinear(hidden_size, inter * 2, bias=False)
         self.down_proj    = CastedLinear(inter, hidden_size, bias=False)
 
+    @torch.compile(fullgraph=True)
     def forward(self, x):
         gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
         return self.down_proj(F.silu(gate) * up)
 
 
 class Attention(nn.Module):
-    def __init__(self, hidden_size, head_dim, num_heads, num_key_value_heads, causal=False):
+    def __init__(self, hidden_size, head_dim, num_heads, num_key_value_heads, causal=False, use_rope=True):
         super().__init__()
 
         self.hidden_size = hidden_size
@@ -171,11 +175,21 @@ class Attention(nn.Module):
         self.num_heads = num_heads
         self.num_key_value_heads = num_key_value_heads
         self.causal = causal
+        self.use_rope = use_rope
 
         self.qkv_proj = CastedLinear(self.hidden_size, (self.num_heads + 2 * self.num_key_value_heads) * self.head_dim, bias=False)
         self.o_proj = CastedLinear(self.output_size, self.hidden_size, bias=False)
+        self._rope_fn = self._apply_rope if self.use_rope else self._skip_rope
 
-    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
+    def _apply_rope(self, query: torch.Tensor, key: torch.Tensor, cos_sin: Optional[CosSin]) -> Tuple[torch.Tensor, torch.Tensor]:
+        cos, sin = cos_sin
+        return apply_rotary_pos_emb(query, key, cos, sin)
+
+    def _skip_rope(self, query: torch.Tensor, key: torch.Tensor, cos_sin: Optional[CosSin]) -> Tuple[torch.Tensor, torch.Tensor]:
+        return query, key
+
+    @torch.compile(fullgraph=True)
+    def forward(self, cos_sin: Optional[CosSin], hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _ = hidden_states.shape
 
         # hidden_states: [bs, seq_len, num_heads, head_dim]
@@ -188,9 +202,7 @@ class Attention(nn.Module):
         value = qkv[:, :, self.num_heads + self.num_key_value_heads:]
 
         # RoPE
-        if cos_sin is not None:
-            cos, sin = cos_sin
-            query, key = apply_rotary_pos_emb(query, key, cos, sin)
+        query, key = self._rope_fn(query, key, cos_sin)
 
         # flash attn
         # TODO: check map parallelization
@@ -227,6 +239,7 @@ class CastedSparseEmbedding(nn.Module):
         # Local embedding IDs, not persistent
         self.local_ids = nn.Buffer(torch.zeros(batch_size, dtype=torch.int32), persistent=False)
 
+    @torch.compile(fullgraph=True)
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         if not self.training:
             # Test mode, no gradient
