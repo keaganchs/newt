@@ -66,8 +66,7 @@ kornia_rs==0.1.10
 labmaze==1.0.6
 llvmlite==0.46.0
 lxml==6.0.2
-mani-skill-nightly==2025.9.19.39
-mani_skill==3.0.0b22
+mani_skill==3.0.1
 MarkupSafe==3.0.3
 matplotlib==3.10.7
 matplotlib-inline==0.2.1
