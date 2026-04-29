@@ -31,13 +31,19 @@ class TRMInnerCarry:
 
 
 @dataclass
+class TRMBatch:
+    inputs: torch.Tensor
+    task_embedding: torch.Tensor
+
+
+@dataclass
 class TRMCarry:
     inner_carry: TRMInnerCarry
     
     steps: torch.Tensor
     halted: torch.Tensor
     
-    current_data: Dict[str, torch.Tensor]
+    current_data: TRMBatch
 
 
 class TRMBlock(nn.Module):
@@ -52,12 +58,12 @@ class TRMBlock(nn.Module):
                     hidden_size=self.config.seq_len, # L
                     expansion=config.expansion,
                 )
-            elif self.config.trm_mlp_mixer_type == "simnorm":
+            elif self.config.trm_mlp_mixer_type == "simnorm" or self.config.trm_mlp_mixer_type == "linear":
                 self.mlp_t = mlp(
                     in_dim=self.config.seq_len, # L
                     mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
                     out_dim=self.config.seq_len,
-                    act=SimNorm(self.config)
+                    act=SimNorm(self.config) if self.config.trm_mlp_mixer_type == "simnorm" else None
                 )
             else:
                 raise ValueError(f"Unsupported TRM MLP mixer type: {self.config.trm_mlp_mixer_type}")
@@ -77,12 +83,12 @@ class TRMBlock(nn.Module):
                 hidden_size=config.hidden_size,
                 expansion=config.expansion,
             )
-        elif self.config.trm_mlp_output_type == "simnorm":
+        elif self.config.trm_mlp_output_type == "simnorm" or self.config.trm_mlp_output_type == "linear":
             self.mlp = mlp(
                 in_dim=self.config.hidden_size,
                 mlp_dims=max(self.config.num_enc_layers-1, 1)*[self.config.enc_dim],
                 out_dim=self.config.hidden_size,
-                act=SimNorm(self.config)
+                act=SimNorm(self.config) if self.config.trm_mlp_output_type == "simnorm" else None
             )
         else:
             raise ValueError(f"Unsupported TRM output MLP type: {self.config.trm_mlp_output_type}")
@@ -339,12 +345,13 @@ class TRMInner(nn.Module):
             z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
         )
 
-    @torch.compile(fullgraph=True, dynamic=True)
-    def forward(self, carry: TRMInnerCarry, batch: Dict[str, torch.Tensor]) -> Tuple[TRMInnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    # @torch.compile(fullgraph=True, dynamic=True)
+    @torch.compile(fullgraph=True)
+    def forward(self, carry: TRMInnerCarry, batch: TRMBatch) -> Tuple[TRMInnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         cos_sin = self._get_cos_sin()
 
         # Input encoding
-        input_embeddings = self._input_embeddings(batch["inputs"], batch["task_embedding"]).to(device=carry.z_H.device)
+        input_embeddings = self._input_embeddings(batch.inputs, batch.task_embedding).to(device=carry.z_H.device)
 
         # Forward iterations
         z_H, z_L = carry.z_H, carry.z_L
@@ -463,8 +470,9 @@ class TRM(nn.Module):
         return halted & (new_steps >= min_halt_steps)
 
     def initial_carry(self, batch: Dict[str, torch.Tensor]):
-        batch_size = batch["inputs"].shape[0]
-        device = batch["inputs"].device
+        batch = self._normalize_batch(batch)
+        batch_size = batch.inputs.shape[0]
+        device = batch.inputs.device
 
         return TRMCarry(
             inner_carry=self.inner.empty_carry(batch_size, device=device),  # Empty is expected, it will be reset in first pass as all sequences are halted.
@@ -472,18 +480,24 @@ class TRM(nn.Module):
             steps=torch.zeros((batch_size, ), dtype=torch.int32, device=device),
             halted=torch.ones((batch_size, ), dtype=torch.bool, device=device),  # Default to halted
             
-            current_data={k: torch.empty_like(v) for k, v in batch.items()}
+            current_data=TRMBatch(
+                inputs=torch.empty_like(batch.inputs),
+                task_embedding=torch.empty_like(batch.task_embedding),
+            )
         )
         
-    @torch.compile(fullgraph=True, dynamic=True)
+    # @torch.compile(fullgraph=True, dynamic=True)
+    @torch.compile(fullgraph=True)
     def forward(self, carry: TRMCarry, batch: Dict[str, torch.Tensor]) -> Tuple[TRMCarry, Dict[str, torch.Tensor]]:
+        batch = self._normalize_batch(batch)
         # Update data, carry (removing halted sequences)
         new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
         new_steps = torch.where(carry.halted, 0, carry.steps)
-        new_current_data = {
-            k: torch.where(carry.halted.view((-1, ) + (1, ) * (batch[k].ndim - 1)), batch[k], v)
-            for k, v in carry.current_data.items()
-        }
+        inputs_mask = carry.halted.view((-1, ) + (1, ) * (batch.inputs.ndim - 1))
+        new_current_data = TRMBatch(
+            inputs=torch.where(inputs_mask, batch.inputs, carry.current_data.inputs),
+            task_embedding=torch.where(carry.halted, batch.task_embedding, carry.current_data.task_embedding),
+        )
 
         # Forward inner model
         new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(new_inner_carry, new_current_data)
@@ -503,3 +517,10 @@ class TRM(nn.Module):
             halted = self._halt_update_fn(new_steps, q_halt_logits)
 
         return TRMCarry(new_inner_carry, new_steps, halted, new_current_data), outputs
+
+    def _normalize_batch(self, batch: Any) -> TRMBatch:
+        if isinstance(batch, TRMBatch):
+            return batch
+        if isinstance(batch, dict):
+            return TRMBatch(inputs=batch["inputs"], task_embedding=batch["task_embedding"])
+        raise TypeError(f"Unsupported TRM batch type: {type(batch)}")

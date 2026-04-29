@@ -96,7 +96,7 @@ class Config:
 	# logging
 	wandb_project: str = "TRM Dynamics"							# wandb project name
 	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = "dmc_trmd_mlp_s_16hs16ld_16opt_no_rec_swsw_jaxified_dynamic_graph"				# wandb run name (defaults to <seed>)
+	wandb_run_name: Optional[str] = "dmc_trmd_mlp_s"				# wandb run name (defaults to <seed>)
 	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
@@ -112,8 +112,8 @@ class Config:
 	use_trm_encoder: bool = False							# whether to use TRM encoder for state observations
 	use_trm_dynamics: bool = True							# whether to use a TRM for the dynamics model
 	mlp_t: bool = True 										# use mlp on L instead of transformer
-	trm_mlp_mixer_type: str = "swiglu"						# type of MLP mixer for the TRM, one of ["swiglu", "simnorm"]
-	trm_mlp_output_type: str = "swiglu"					# type of MLP for projecting TRM output, one of ["swiglu", "simnorm"]	
+	trm_mlp_mixer_type: str = "linear"						# type of MLP mixer for the TRM, one of ["swiglu", "simnorm", "linear"]
+	trm_mlp_output_type: str = "linear"					# type of MLP for projecting TRM output, one of ["swiglu", "simnorm", "linear"]	
 
 	H_cycles: int = 1
 	L_cycles: int = 1

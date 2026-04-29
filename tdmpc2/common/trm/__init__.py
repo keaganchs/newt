@@ -1,1 +1,1 @@
-from .trm import TRM
+from .trm import TRM, TRMBatch
