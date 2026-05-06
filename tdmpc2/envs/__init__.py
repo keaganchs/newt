@@ -6,14 +6,19 @@ import gymnasium as gym
 from envs.wrappers.vectorized_multitask import make_vectorized_multitask_env
 from envs.wrappers.render import Render
 from envs.dmcontrol import make_env as make_dm_control_env
-from envs.maniskill import make_env as make_maniskill_env
-from envs.metaworld import make_env as make_metaworld_env
+# from envs.maniskill import make_env as make_maniskill_env
+make_maniskill_env = None
+# from envs.metaworld import make_env as make_metaworld_env
+make_metaworld_env = None
 from envs.mujoco import make_env as make_mujoco_env
-from envs.box2d import make_env as make_box2d_env
+# from envs.box2d import make_env as make_box2d_env
+make_box2d_env = None
 from envs.robodesk import make_env as make_robodesk_env
 from envs.ogbench import make_env as make_ogbench_env
-from envs.pygame import make_env as make_pygame_env
-from envs.atari import make_env as make_atari_env
+# from envs.pygame import make_env as make_pygame_env
+make_pygame_env = None
+# from envs.atari import make_env as make_atari_env
+make_atari_env = None
 
 
 def make_env(cfg):
