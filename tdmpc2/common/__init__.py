@@ -10,7 +10,7 @@ MODEL_SIZE = {
 		  	'latent_dim': 384,
 		  	'num_enc_layers': 2,
 			'num_q': 3},
-	'B':   {'enc_dim': 256,
+	'M':   {'enc_dim': 256,
 		  	'mlp_dim': 512,
 		  	'latent_dim': 512,
 		  	'num_enc_layers': 2},
@@ -35,7 +35,7 @@ TRM_SIZE = {
 			'latent_dim': 16,
 			'num_enc_layers': 2,
 			'num_state_obs_per_token': 16},
-	'B':   {'hidden_size': 512, # 256+att=>~1.6M parameters
+	'M':   {'hidden_size': 512, # 256+att=>~1.6M parameters
 		  	'num_heads': 8,
 			'expansion': 4.0,
 			'H_cycles': 2,
