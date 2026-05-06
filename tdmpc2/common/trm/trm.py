@@ -214,7 +214,6 @@ class TRMInner(nn.Module):
         self.l_scan_tokens = nn.Buffer(torch.arange(self.config.L_cycles, dtype=torch.int32), persistent=False)
         self.h_nograd_tokens = nn.Buffer(torch.arange(max(self.config.H_cycles - 1, 0), dtype=torch.int32), persistent=False)
         self.h_grad_tokens = nn.Buffer(torch.arange(1, dtype=torch.int32), persistent=False)
-        self.has_h_nograd_scan = self.config.H_cycles > 1
         self._scan_impl = _resolve_scan_impl()
         if self._scan_impl is None:
             raise RuntimeError("TRM requires torch.scan (or torch.func.scan) for recursion loops.")
@@ -357,12 +356,11 @@ class TRMInner(nn.Module):
         z_H, z_L = carry.z_H, carry.z_L
 
         # H_cycles-1 without grad
-        if self.has_h_nograd_scan:
-            with torch.no_grad():
-                for _ in range(self.config.H_cycles - 1):
-                    z_H_inject = z_H + input_embeddings
-                    z_L = self._run_l_scan(z_L, z_H_inject, cos_sin)
-                    z_H = self.L_level(z_H, z_L, cos_sin=cos_sin)
+        with torch.no_grad():
+            for _ in range(self.config.H_cycles - 1):
+                z_H_inject = z_H + input_embeddings
+                z_L = self._run_l_scan(z_L, z_H_inject, cos_sin)
+                z_H = self.L_level(z_H, z_L, cos_sin=cos_sin)
 
         # Final H step with grad
         z_H_inject = z_H + input_embeddings
