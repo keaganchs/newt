@@ -106,20 +106,20 @@ class Config:
 	save_video: bool = False								# whether to save evaluation videos
 	save_agent: bool = True									# whether to save agent checkpoints
 	data_dir: str = "<path>/<to>/data"						# directory for demonstrations
-	seed: int = 1											# random seed
+	seed: int = 0											# random seed
 
 	# TRM config, most options are overridden by `model_size` or `trm_size` if specified
 	use_trm_encoder: bool = False							# whether to use TRM encoder for state observations
-	use_trm_dynamics: bool = True							# whether to use a TRM for the dynamics model
+	use_trm_dynamics: Optional[str] = "simple"					# dynamics model type: None, "simple", or "trm"
 	mlp_t: bool = True 										# use mlp on L instead of transformer
-	trm_mlp_mixer_type: str = "linear"						# type of MLP mixer for the TRM, one of ["swiglu", "simnorm", "linear"]
-	trm_mlp_output_type: str = "linear"					# type of MLP for projecting TRM output, one of ["swiglu", "simnorm", "linear"]	
+	trm_mlp_mixer_type: str = "swiglu"						# type of MLP mixer for the TRM, one of ["swiglu", "simnorm", "linear"]
+	trm_mlp_output_type: str = "swiglu"					# type of MLP for projecting TRM output, one of ["swiglu", "simnorm", "linear"]	
 
 	H_cycles: int = 1
 	L_cycles: int = 1
 	L_layers: int = 2
 	num_state_obs_per_token: int = 8						# Number of values in the state observation vector to place in each token. Affects the sequence length
-	pooling_strategy: str = "mean"					# pooling strategy for transformer encoder output, one of ["mean", "cls", "mean_obs_only"]
+	pooling_strategy: str = "mean_obs_only"					# pooling strategy for transformer encoder output, one of ["mean", "cls", "mean_obs_only"]
 	use_trm_hidden_state_simnorm: bool = True				# whether to apply SimNorm to the hidden state before pooling
 
 	# Transformer config

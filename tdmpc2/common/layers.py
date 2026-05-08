@@ -178,9 +178,12 @@ def dyn(cfg, out={}):
 	"""
 	Returns a dynmaics model for TD-MPC2.
 	"""
-	if cfg.use_trm_dynamics:
+	if cfg.use_trm_dynamics == "trm":
 		from common.trm import TRM
 		out = TRM(cfg, model_type="dynamics").to(torch.device('cuda'))
+	elif cfg.use_trm_dynamics == "simple":
+		from common.trm.simple_trm import SimpleTRM
+		out = SimpleTRM(cfg).to(torch.device('cuda'))
 	else:
 		out = mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=SimNorm(cfg))
 

@@ -201,7 +201,7 @@ class WorldModel(nn.Module):
 		"""
 		Predicts the next latent state given the current latent state and action.
 		"""
-		if self.cfg.use_trm_dynamics:
+		if self.cfg.use_trm_dynamics == "trm":
 			obs = torch.cat([z, a], dim=-1)
 			_obs_flat = obs.view(-1, obs.shape[-1])
 			_task_flat = self.reshape_task_ids(task, obs.shape[:-1]) 
@@ -211,6 +211,15 @@ class WorldModel(nn.Module):
 			init_carry=self._dynamics.initial_carry(x)
 			out = self._dynamics(init_carry, x)[1]['logits']
 			return out.view(*obs.shape[:-1], -1)
+		elif self.cfg.use_trm_dynamics == "simple":
+			x = self.task_emb(z, task)
+			x = torch.cat([x, a], dim=-1)
+			batch_shape = x.shape[:-1]
+			# Flatten to match input shapes for calls with different batch shapes (for planning with an added horizon dim)
+			x_flat = x.reshape(-1, x.shape[-1]).contiguous().clone() # .contiguous().clone() avoids Pytorch guard warnings
+			init_carry = self._dynamics.initial_carry(x_flat)
+			out = self._dynamics(init_carry)
+			return out.view(*batch_shape, -1)
 		else:
 			z = self.task_emb(z, task)
 			z = torch.cat([z, a], dim=-1)
