@@ -67,6 +67,51 @@ def mlp(in_dim, mlp_dims, out_dim, act=None):
 	return nn.Sequential(*mlp)
 
 
+class FiLM(nn.Module):
+	"""
+	Feature-wise Linear Modulation: y = gamma(cond) * x + beta(cond).
+	Projects cond to per-feature scale and shift parameters.
+	"""
+
+	def __init__(self, cond_dim: int, feature_dim: int):
+		super().__init__()
+		self.gamma = nn.Linear(cond_dim, feature_dim)
+		self.beta = nn.Linear(cond_dim, feature_dim)
+
+	def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+		return self.gamma(cond) * x + self.beta(cond)
+
+	def __repr__(self):
+		return f"FiLM(cond_dim={self.gamma.in_features}, feature_dim={self.gamma.out_features})"
+
+
+class FiLMDynamics(nn.Module):
+	"""
+	Dynamics model with FiLM task conditioning.
+	Processes [z, action] through a hidden layer, conditions it with the task
+	embedding via FiLM, then projects to the next latent state.
+
+	Accepts the same concatenated input as the default dynamics model:
+	x = [z (latent_dim) | task_emb (task_dim) | action (action_dim)]
+	"""
+
+	def __init__(self, cfg):
+		super().__init__()
+		self.latent_dim = cfg.latent_dim
+		self.task_dim = cfg.task_dim
+		self.fc1 = NormedLinear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim)
+		self.film = FiLM(cfg.task_dim, cfg.mlp_dim)
+		self.fc2 = NormedLinear(cfg.mlp_dim, cfg.latent_dim, act=SimNorm(cfg))
+
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		z = x[..., :self.latent_dim]
+		task_emb = x[..., self.latent_dim:self.latent_dim + self.task_dim]
+		action = x[..., self.latent_dim + self.task_dim:]
+		h = self.fc1(torch.cat([z, action], dim=-1))
+		h = self.film(h, task_emb)
+		return self.fc2(h)
+
+
 def policy(in_dim, mlp_dims, out_dim, act=None):
 	"""
 	Policy network for TD-MPC2.
@@ -184,6 +229,8 @@ def dyn(cfg, out={}):
 	elif cfg.use_trm_dynamics == "simple":
 		from common.trm.simple_trm import SimpleTRM
 		out = SimpleTRM(cfg).to(torch.device('cuda'))
+	elif cfg.use_film_dynamics:
+		out = FiLMDynamics(cfg)
 	else:
 		out = mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=SimNorm(cfg))
 
