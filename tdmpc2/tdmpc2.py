@@ -443,38 +443,18 @@ class TDMPC2(torch.nn.Module):
 		if not self.cfg.use_trm_encoder:
 			info["enc_grad_norm"] = self._grad_norm(self.model._encoder.parameters())
 		info["dyn_grad_norm"] = self._grad_norm(self.model._dynamics.parameters())
-		dyn_cycles = self.cfg.H_cycles * self.cfg.L_cycles if self.cfg.use_trm_dynamics in {"trm", "simple"} else 1
-		info["dyn_grad_norm_per_cycle"] = info["dyn_grad_norm"] / max(dyn_cycles, 1)
 
-		# Log metrics about latent next state predictions and rewards
-		with torch.no_grad():
-			diff = zs[1] - zs[0]
-			l2 = torch.linalg.vector_norm(diff, dim=-1)
-			cos = F.cosine_similarity(zs[0], zs[1], dim=-1, eps=1e-8)
-			reward_logits = self.model.reward(zs[0], action[0], task[0])
-			reward_probs = F.softmax(reward_logits, dim=-1)
-			reward_entropy = -(reward_probs * (reward_probs + 1e-8).log()).sum(dim=-1)
-			reward_pred = math.two_hot_inv(reward_logits, self.cfg)
+		# Log per-recursion-step gradient norms through SimpleTRM final pass (vanishing gradient check)
+		if self.cfg.use_trm_dynamics == "simple":
+			pending = self.model._dynamics._pending_grad_norms
+			if pending:
+				keys = pending[0].keys()
+				for key in keys:
+					norms = [d[key] for d in pending if key in d]
+					if norms:
+						info[f"dyn_step_grad_norm_{key}"] = torch.stack(norms).mean()
+				pending.clear()
 
-			task_state_flat = task[0].reshape(-1)
-			l2_flat = l2.reshape(-1)
-			cos_flat = cos.reshape(-1)
-			reward_flat = reward_pred.reshape(-1)
-			reward_entropy_flat = reward_entropy.reshape(-1)
-
-			info["dyn_l2"] = l2_flat.mean()
-			info["dyn_cos"] = cos_flat.mean()
-			info["reward_pred"] = reward_flat.mean()
-			info["reward_entropy"] = reward_entropy_flat.mean()
-
-			for tid in task_state_flat.unique():
-				mask = task_state_flat == tid
-				task_name = self.cfg.global_tasks[int(tid.item())]
-				info[f"dyn_l2+{task_name}"] = l2_flat[mask].mean()
-				info[f"dyn_cos+{task_name}"] = cos_flat[mask].mean()
-				info[f"reward_pred+{task_name}"] = reward_flat[mask].mean()
-				info[f"reward_entropy+{task_name}"] = reward_entropy_flat[mask].mean()
-		
 		grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip_norm)
 		self.optim.step()
 		self.optim.zero_grad(set_to_none=True)
