@@ -346,13 +346,13 @@ class TDMPC2(torch.nn.Module):
 		discount = self.discount[task].unsqueeze(-1)
 		return reward + discount * self.model.Q(next_z, action, task, return_type='min', target=True)
 
-	def _loss_fn(self, obs, action, reward, task=None):
+	def _loss_fn(self, obs, action, reward, next_z, task=None):
 		"""
 		Compute the model loss for a batch of data.
 		"""
-		# Compute targets
+		# Compute targets. next_z is pre-computed in self.update() so that encode is
+		# only called once below (always with grad enabled), avoiding grad_mode recompiles
 		with torch.no_grad():
-			next_z = self.model.encode(obs[1:], task)
 			td_targets = self._td_target(next_z, reward, task)
 
 		# Latent rollout
@@ -432,9 +432,13 @@ class TDMPC2(torch.nn.Module):
 		if self.cfg.lr_schedule:
 			self.scheduler.step()
 
+		# Precompute next_z to avoid grad_mode recompiles in self.loss_fn when encode is called both with and without grad enabled
+		with torch.no_grad():
+			next_z = self.model.encode(obs[1:], task)
+
 		# Compute loss
 		torch.compiler.cudagraph_mark_step_begin()
-		total_loss, zs, info = self.loss_fn(obs, action, reward, task)
+		total_loss, zs, info = self.loss_fn(obs, action, reward, next_z, task)
 
 		# Update model
 		total_loss.backward()
@@ -444,9 +448,31 @@ class TDMPC2(torch.nn.Module):
 			info["enc_grad_norm"] = self._grad_norm(self.model._encoder.parameters())
 		info["dyn_grad_norm"] = self._grad_norm(self.model._dynamics.parameters())
 
-		# Log per-recursion-step gradient norms through SimpleTRM final pass (vanishing gradient check)
+		# Log per-recursion-step gradient norms through TRM encoder final pass (vanishing gradient check)
+		if self.cfg.use_trm_encoder:
+			pending = self.model._encoder['state'].inner._pending_grad_norms
+			if pending:
+				keys = pending[0].keys()
+				for key in keys:
+					norms = [d[key] for d in pending if key in d]
+					if norms:
+						info[f"enc_step_grad_norm_{key}"] = torch.stack(norms).mean()
+				pending.clear()
+
+		# Log per-recursion-step gradient norms through SimpleTRM final pass
 		if self.cfg.use_trm_dynamics == "simple":
 			pending = self.model._dynamics._pending_grad_norms
+			if pending:
+				keys = pending[0].keys()
+				for key in keys:
+					norms = [d[key] for d in pending if key in d]
+					if norms:
+						info[f"dyn_step_grad_norm_{key}"] = torch.stack(norms).mean()
+				pending.clear()
+
+		# Log per-recursion-step gradient norms through TRM dynamics final pass
+		if self.cfg.use_trm_dynamics == "trm":
+			pending = self.model._dynamics.inner._pending_grad_norms
 			if pending:
 				keys = pending[0].keys()
 				for key in keys:
