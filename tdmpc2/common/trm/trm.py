@@ -121,7 +121,6 @@ class TRMReasoningModule(nn.Module):
         super().__init__()
         self.layers = torch.nn.ModuleList(layers)
 
-    @torch.compile(fullgraph=True)
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, cos_sin: Optional[CosSin]) -> torch.Tensor:
         hidden_states = hidden_states + input_injection
         for layer in self.layers:
@@ -246,6 +245,9 @@ class TRMInner(nn.Module):
             self.q_head.weight.zero_()
             self.q_head.bias.fill_(-5)  # type: ignore
 
+        # Log gradient norms through recursion steps to check for vanishing gradients.
+        self._pending_grad_norms: List[Dict[str, torch.Tensor]] = []
+
     def _scan(self, fn: Callable[[Any, torch.Tensor], Tuple[Any, Any]], init: Any, xs: torch.Tensor) -> Tuple[Any, Any]:
         return self._scan_impl(fn, init, xs)
 
@@ -297,11 +299,37 @@ class TRMInner(nn.Module):
     def _get_cos_sin_rope(self) -> Optional[CosSin]:
         return self.rotary_emb()
 
-    def _run_l_scan(self, z_l: torch.Tensor, z_h_inject: torch.Tensor, cos_sin: Optional[CosSin]) -> torch.Tensor:
-        # Nested scan + compile currently triggers autograd tracing failures in some PyTorch builds.
-        # Keep outer H recursion on scan, and run the inner L recursion as a static loop.
+    # Separately compiled no-grad and grad variants for L/H level calls.
+    # Splitting by grad context avoids grad_mode guard failures (same pattern as SimpleTRM).
+
+    @torch.no_grad()
+    @torch.compile(fullgraph=True, dynamic=True)
+    def _run_l_nograd(self, z_l: torch.Tensor, z_h_inject: torch.Tensor, cos_sin: Optional[CosSin]) -> torch.Tensor:
         for _ in range(self.config.L_cycles):
             z_l = self.L_level(z_l, z_h_inject, cos_sin=cos_sin)
+        return z_l
+
+    @torch.no_grad()
+    @torch.compile(fullgraph=True, dynamic=True)
+    def _H_level_nograd(self, z_H: torch.Tensor, z_L: torch.Tensor, cos_sin: Optional[CosSin]) -> torch.Tensor:
+        return self.L_level(z_H, z_L, cos_sin=cos_sin)
+
+    @torch.compile(fullgraph=True, dynamic=True)
+    def _L_level_step_grad(self, z_l: torch.Tensor, z_h_inject: torch.Tensor, cos_sin: Optional[CosSin]) -> torch.Tensor:
+        return self.L_level(z_l, z_h_inject, cos_sin=cos_sin)
+
+    @torch.compile(fullgraph=True, dynamic=True)
+    def _H_level_grad(self, z_H: torch.Tensor, z_L: torch.Tensor, cos_sin: Optional[CosSin]) -> torch.Tensor:
+        return self.L_level(z_H, z_L, cos_sin=cos_sin)
+
+    # Not compiled: register_hook requires eager execution. _run_l_nograd / _L_level_step_grad remain compiled.
+    def _run_l_scan(self, z_l: torch.Tensor, z_h_inject: torch.Tensor, cos_sin: Optional[CosSin], step_norms: Optional[Dict[str, torch.Tensor]] = None) -> torch.Tensor:
+        for i in range(self.config.L_cycles):
+            z_l = self._L_level_step_grad(z_l, z_h_inject, cos_sin)
+            if step_norms is not None and z_l.requires_grad:
+                z_l.register_hook(
+                    lambda g, _i=i: step_norms.update({f"z_L_{_i}": g.detach().norm()})
+                )
         return z_l
 
     def _input_embeddings(self, input: torch.Tensor, task_embedding: torch.Tensor):
@@ -344,8 +372,10 @@ class TRMInner(nn.Module):
             z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
         )
 
-    # @torch.compile(fullgraph=True, dynamic=True)
-    @torch.compile(fullgraph=True)
+    # Disabled for compilation: register_hook requires eager execution; parent compiler sees this as
+    # opaque, preventing guard failures on _pending_grad_norms and grad_mode. _run_l_nograd,
+    # _H_level_nograd, _L_level_step_grad, and _H_level_grad are still compiled.
+    @torch.compiler.disable
     def forward(self, carry: TRMInnerCarry, batch: TRMBatch) -> Tuple[TRMInnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         cos_sin = self._get_cos_sin()
 
@@ -355,17 +385,29 @@ class TRMInner(nn.Module):
         # Forward iterations
         z_H, z_L = carry.z_H, carry.z_L
 
-        # H_cycles-1 without grad
+        # H_cycles-1 warmup passes without grad (compiled no-grad variants avoid grad_mode recompile)
         with torch.no_grad():
             for _ in range(self.config.H_cycles - 1):
                 z_H_inject = z_H + input_embeddings
-                z_L = self._run_l_scan(z_L, z_H_inject, cos_sin)
-                z_H = self.L_level(z_H, z_L, cos_sin=cos_sin)
+                z_L = self._run_l_nograd(z_L, z_H_inject, cos_sin)
+                z_H = self._H_level_nograd(z_H, z_L, cos_sin)
 
-        # Final H step with grad
+        # Set up per-step grad norm tracking for the final pass
+        step_norms: Dict[str, torch.Tensor] = {}
+        if self.training:
+            self._pending_grad_norms.append(step_norms)
+
+        # Final H step: use no-grad compiled variants during inference, grad variants during training.
+        # Separate compiled objects per grad context avoid grad_mode guard failures (same as SimpleTRM).
         z_H_inject = z_H + input_embeddings
-        z_L = self._run_l_scan(z_L, z_H_inject, cos_sin)
-        z_H = self.L_level(z_H, z_L, cos_sin=cos_sin)
+        if not torch.is_grad_enabled():
+            z_L = self._run_l_nograd(z_L, z_H_inject, cos_sin)
+            z_H = self._H_level_nograd(z_H, z_L, cos_sin)
+        else:
+            z_L = self._run_l_scan(z_L, z_H_inject, cos_sin, step_norms=step_norms if self.training else None)
+            z_H = self._H_level_grad(z_H, z_L, cos_sin)
+            if self.training and z_H.requires_grad:
+                z_H.register_hook(lambda g: step_norms.update({"z_H": g.detach().norm()}))
 
         # LM Outputs
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
@@ -484,8 +526,9 @@ class TRM(nn.Module):
             )
         )
         
-    # @torch.compile(fullgraph=True, dynamic=True)
-    @torch.compile(fullgraph=True)
+    # Disabled for compilation: prevents the parent (loss_fn) from tracing through encode→TRM,
+    # which would guard on grad_mode and recompile when called from planning (no-grad context).
+    @torch.compiler.disable
     def forward(self, carry: TRMCarry, batch: Dict[str, torch.Tensor]) -> Tuple[TRMCarry, Dict[str, torch.Tensor]]:
         batch = self._normalize_batch(batch)
         # Update data, carry (removing halted sequences)
