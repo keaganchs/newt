@@ -93,7 +93,6 @@ class CastedLinear(nn.Module):
             # Zero init bias
             self.bias = nn.Parameter(torch.zeros((out_features, )))
 
-    @torch.compile(fullgraph=True)
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return F.linear(input, self.weight.to(input.dtype), bias=self.bias.to(input.dtype) if self.bias is not None else None)
 
@@ -141,7 +140,6 @@ class RotaryEmbedding(nn.Module):
         self.cos_cached = nn.Buffer(emb.cos(), persistent=False)
         self.sin_cached = nn.Buffer(emb.sin(), persistent=False)
 
-    @torch.compile(fullgraph=True)
     def forward(self):
         return self.cos_cached, self.sin_cached
 
