@@ -328,7 +328,7 @@ class TRMInner(nn.Module):
             z_l = self._L_level_step_grad(z_l, z_h_inject, cos_sin)
             if step_norms is not None and z_l.requires_grad:
                 z_l.register_hook(
-                    lambda g, _i=i: step_norms.update({f"z_L_{_i}": g.detach().norm()})
+                    lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()})
                 )
         return z_l
 
@@ -407,7 +407,7 @@ class TRMInner(nn.Module):
             z_L = self._run_l_scan(z_L, z_H_inject, cos_sin, step_norms=step_norms if self.training else None)
             z_H = self._H_level_grad(z_H, z_L, cos_sin)
             if self.training and z_H.requires_grad:
-                z_H.register_hook(lambda g: step_norms.update({"z_H": g.detach().norm()}))
+                z_H.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
 
         # LM Outputs
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
