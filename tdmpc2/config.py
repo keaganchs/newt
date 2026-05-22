@@ -92,6 +92,7 @@ class Config:
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
+	use_film_dynamics: bool = False							# whether to use FiLM conditioning for the task embedding in the dynamics model
 
 	# logging
 	wandb_project: str = "TRM Dynamics"							# wandb project name
