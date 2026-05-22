@@ -31,6 +31,7 @@ class SimpleTRM(nn.Module):
         super().__init__()
         self.config = config
         self.use_film = config.use_film_dynamics
+        self.use_skip = config.use_simple_trm_skip_connections
 
         if self.use_film:
             # x = [z_initial | task_emb | action]; condition via FiLM, not concatenation
@@ -95,15 +96,27 @@ class SimpleTRM(nn.Module):
         # handles the no-grad context; carry.detached() ensures requires_grad=False on all inputs.
         for _ in range(self.config.H_cycles - 1):
             for _ in range(self.config.L_cycles):
+                z_before = carry.z
                 carry.z = apply_nograd(carry.detached())
+                if self.use_skip:
+                    carry.z = carry.z + z_before
+            y_before = carry.y
             carry.y = apply_nograd(carry.detached())
+            if self.use_skip:
+                carry.y = carry.y + y_before
 
         # During inference/planning (no grad context), use nograd variant for the final pass too,
         # so apply_grad is never called with grad_mode=False (which would trigger recompilation).
         if not torch.is_grad_enabled():
             for _ in range(self.config.L_cycles):
+                z_before = carry.z
                 carry.z = apply_nograd(carry.detached())
+                if self.use_skip:
+                    carry.z = carry.z + z_before
+            y_before = carry.y
             carry.y = apply_nograd(carry.detached())
+            if self.use_skip:
+                carry.y = carry.y + y_before
             return carry.y
 
         # Ensure carry.z has requires_grad=True before the first call so apply_grad always sees
@@ -115,12 +128,18 @@ class SimpleTRM(nn.Module):
 
         # Final pass with grad; register hooks to track per-step gradient norms.
         for i in range(self.config.L_cycles):
+            z_before = carry.z
             carry.z = apply_grad(carry)
+            if self.use_skip:
+                carry.z = carry.z + z_before
             if self.training and carry.z.requires_grad:
                 carry.z.register_hook(
                     lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()})
                 )
+        y_before = carry.y
         carry.y = apply_grad(carry)
+        if self.use_skip:
+            carry.y = carry.y + y_before
         if self.training and carry.y.requires_grad:
             carry.y.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
 
