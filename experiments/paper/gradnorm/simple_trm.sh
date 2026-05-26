@@ -42,7 +42,8 @@ for SEED in "${SEEDS[@]}"; do
         H_cycles=2 \
         L_cycles=6 \
         seed="$SEED" \
-        latent_dim=384 &
+        latent_dim=384 \
+        use_simple_trm_skip_connections=False &
 done
 
 wait
