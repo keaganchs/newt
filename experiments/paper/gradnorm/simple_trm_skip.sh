@@ -37,7 +37,7 @@ for SEED in "${SEEDS[@]}"; do
         model_size="S" \
         wandb_project="TRM Dynamics" \
         wandb_entity="trm-dynamics" \
-        wandb_run_name="dmc_trmd_s_s${SEED}_128hs384ld_128opt_2h6l_gradnorm" \
+        wandb_run_name="dmc_trmd_simple_s_s${SEED}_384ld_2h6l_gradnorm_skip" \
         enable_wandb=True \
         H_cycles=2 \
         L_cycles=6 \
