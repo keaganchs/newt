@@ -43,6 +43,9 @@ class SimpleTRM(nn.Module):
             input_dim = config.task_dim + config.action_dim + 3 * config.latent_dim
             self.mlp = mlp(input_dim, [], config.latent_dim, act=SimNorm(config))
 
+        if self.use_skip:
+            self.skip_mlp = mlp(config.latent_dim, [], config.latent_dim, act=nn.Mish())
+
         # For logging grad norms through each backward pass/update call through the recursion steps
         self._pending_grad_norms: List[Dict[str, torch.Tensor]] = []
 
@@ -99,11 +102,11 @@ class SimpleTRM(nn.Module):
                 z_before = carry.z
                 carry.z = apply_nograd(carry.detached())
                 if self.use_skip:
-                    carry.z = carry.z + z_before
+                    carry.z = carry.z + self.skip_mlp(z_before.detach())
             y_before = carry.y
             carry.y = apply_nograd(carry.detached())
             if self.use_skip:
-                carry.y = carry.y + y_before
+                carry.y = carry.y + self.skip_mlp(y_before.detach())
 
         # During inference/planning (no grad context), use nograd variant for the final pass too,
         # so apply_grad is never called with grad_mode=False (which would trigger recompilation).
@@ -112,11 +115,11 @@ class SimpleTRM(nn.Module):
                 z_before = carry.z
                 carry.z = apply_nograd(carry.detached())
                 if self.use_skip:
-                    carry.z = carry.z + z_before
+                    carry.z = carry.z + self.skip_mlp(z_before.detach())
             y_before = carry.y
             carry.y = apply_nograd(carry.detached())
             if self.use_skip:
-                carry.y = carry.y + y_before
+                carry.y = carry.y + self.skip_mlp(y_before.detach())
             return carry.y
 
         # Ensure carry.z has requires_grad=True before the first call so apply_grad always sees
@@ -131,7 +134,7 @@ class SimpleTRM(nn.Module):
             z_before = carry.z
             carry.z = apply_grad(carry)
             if self.use_skip:
-                carry.z = carry.z + z_before
+                carry.z = carry.z + self.skip_mlp(z_before)
             if self.training and carry.z.requires_grad:
                 carry.z.register_hook(
                     lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()})
@@ -139,7 +142,7 @@ class SimpleTRM(nn.Module):
         y_before = carry.y
         carry.y = apply_grad(carry)
         if self.use_skip:
-            carry.y = carry.y + y_before
+            carry.y = carry.y + self.skip_mlp(y_before)
         if self.training and carry.y.requires_grad:
             carry.y.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
 
