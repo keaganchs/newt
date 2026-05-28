@@ -373,9 +373,9 @@ class TDMPC2(torch.nn.Module):
 		# Compute losses
 		reward_loss, value_loss = 0, 0
 		for t, (rew_pred_unbind, rew_unbind, td_targets_unbind, qs_unbind) in enumerate(zip(reward_preds.unbind(0), reward.unbind(0), td_targets.unbind(0), qs.unbind(1))):
-			reward_loss = reward_loss + math.soft_ce(rew_pred_unbind, rew_unbind, self.cfg).mean() * self.rho[t]
+			reward_loss = reward_loss + math.soft_ce(rew_pred_unbind.contiguous(), rew_unbind, self.cfg).mean() * self.rho[t]
 			for _, qs_unbind_unbind in enumerate(qs_unbind.unbind(0)):
-				value_loss = value_loss + math.soft_ce(qs_unbind_unbind, td_targets_unbind, self.cfg).mean() * self.rho[t]
+				value_loss = value_loss + math.soft_ce(qs_unbind_unbind.contiguous(), td_targets_unbind, self.cfg).mean() * self.rho[t]
 		value_loss = value_loss / self.cfg.num_q
 	
 		if not self.maxq_pi: # Behavior cloning
