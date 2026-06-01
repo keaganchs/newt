@@ -85,13 +85,13 @@ def cfg_to_group(cfg, return_list=False):
 		cycles = f"{cfg.H_cycles}h{cfg.L_cycles}l"
 		base.extend([run_type, mixer_type, latent_dim, cycles])
 	# SimpleTRM
-	elif cfg.use_trm_dynamics == "simple_trm":
+	elif cfg.use_trm_dynamics == "simple":
 		run_type = "trmd_simple"
 		size = cfg.model_size if cfg.model_size else "custom"
 		latent_dim = f"{cfg.latent_dim}ld"
 		cycles = f"{cfg.H_cycles}h{cfg.L_cycles}l"
-		film = "film" if cfg.use_film else ""
-		skip = "skip" if cfg.use_simple_trm_skip_connections else ""
+		film = "film" if cfg.use_film_dynamics else ""
+		skip = f"{cfg.simple_trm_skip_type}skip" if cfg.use_simple_trm_skip_connections else ""
 		base.extend([run_type, size, latent_dim, cycles, film, skip])
 	# Newt groups
 	else:
