@@ -5,6 +5,7 @@ os.environ["TORCH_DISTRIBUTED_TIMEOUT"] = "1800"
 os.environ['TORCHDYNAMO_INLINE_INBUILT_NN_MODULES'] = "1"
 os.environ['TORCHDYNAMO_VERBOSE'] = "1" 
 os.environ['TORCH_LOGS'] = "+recompiles"
+os.environ["WANDB__SERVICE_WAIT"] = "300"
 import warnings
 warnings.filterwarnings('ignore')
 from copy import deepcopy
