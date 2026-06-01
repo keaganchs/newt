@@ -78,11 +78,21 @@ def cfg_to_group(cfg, return_list=False):
 	"""
 	base = [cfg.task]
 	# TRM groups
-	if cfg.use_trm_dynamics or cfg.use_trm_encoder:
+	if cfg.use_trm_dynamics == "trm" or cfg.use_trm_encoder:
 		run_type = "trmd" if cfg.use_trm_dynamics else "trme"
 		mixer_type = "att" if not cfg.mlp_t else "mlp"
 		latent_dim = f"{cfg.latent_dim}ld"
-		base.extend([run_type, mixer_type, latent_dim])
+		cycles = f"{cfg.H_cycles}h{cfg.L_cycles}l"
+		base.extend([run_type, mixer_type, latent_dim, cycles])
+	# SimpleTRM
+	elif cfg.use_trm_dynamics == "simple_trm":
+		run_type = "trmd_simple"
+		size = cfg.model_size if cfg.model_size else "custom"
+		latent_dim = f"{cfg.latent_dim}ld"
+		cycles = f"{cfg.H_cycles}h{cfg.L_cycles}l"
+		film = "film" if cfg.use_film else ""
+		skip = "skip" if cfg.use_simple_trm_skip_connections else ""
+		base.extend([run_type, size, latent_dim, cycles, film, skip])
 	# Newt groups
 	else:
 		run_type = "newt"
@@ -146,7 +156,8 @@ class Logger:
 		self._log_dir = Path(make_dir(cfg.work_dir))
 		self._model_dir = make_dir(self._log_dir / "models")
 		self._save_agent = cfg.save_agent
-		self._group = cfg_to_group(cfg)
+		self._name = str(cfg.wandb_run_name) if cfg.get("wandb_run_name", None) else str(cfg.seed)
+		self._group = cfg_to_group(cfg) if not cfg.get("wandb_group", None) else cfg.wandb_group
 		self._seed = cfg.seed
 		self._eval = []
 		print_run(cfg)
@@ -154,7 +165,7 @@ class Logger:
 		wandb.init(
 			project=self.project,
 			entity=self.entity,
-			name=str(cfg.wandb_run_name) if cfg.get("wandb_run_name", None) else str(cfg.seed),
+			name=self._name,
 			group=self._group,
 			tags=cfg_to_group(cfg, return_list=True) + [f"seed:{cfg.seed}"],
 			dir=self._log_dir,
