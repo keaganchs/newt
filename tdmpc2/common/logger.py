@@ -90,9 +90,9 @@ def cfg_to_group(cfg, return_list=False):
 		size = cfg.model_size if cfg.model_size else "custom"
 		latent_dim = f"{cfg.latent_dim}ld"
 		cycles = f"{cfg.H_cycles}h{cfg.L_cycles}l"
-		film = "film" if cfg.use_film_dynamics else ""
-		skip = f"{cfg.simple_trm_skip_type}skip" if cfg.use_simple_trm_skip_connections else ""
-		base.extend([run_type, size, latent_dim, cycles, film, skip])
+		film = "film" if cfg.use_film_dynamics else None
+		skip = f"{cfg.simple_trm_skip_type[:3]}skip" if cfg.use_simple_trm_skip_connections else None
+		base.extend([t for t in [run_type, size, latent_dim, cycles, film, skip] if t])
 	# Newt groups
 	else:
 		run_type = "newt"
@@ -100,7 +100,11 @@ def cfg_to_group(cfg, return_list=False):
 		base.extend([run_type, size])
 
 	lst = base
-		
+	
+	if len(lst) > 64:
+		print(colored(f"Warning: group name {lst} is too long for wandb, truncating...", "red", attrs=["bold"]))
+		lst = lst[:64]
+
 	# Ensure strings are valid:
 	lst = [re.sub("[^0-9a-zA-Z]+", "-", str(s)) for s in lst]
 
