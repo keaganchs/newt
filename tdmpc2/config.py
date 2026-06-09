@@ -94,8 +94,10 @@ class Config:
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
 	use_film_dynamics: bool = False							# whether to use FiLM conditioning for the task embedding in the dynamics model
 	use_simple_trm_skip_connections: bool = True			# whether to add residual skip connections across z/y recursion cycles in SimpleTRM
+	simple_trm_skip_type: str = "additive"						# skip connection type for SimpleTRM: "additive" (z + z_before) or "mlp" (z + skip_mlp(z_before))
 
 	# logging
+	log_trm_gradnorms: bool = True							# log per-step gradient norms through SimpleTRM recursion (disables torch.compile on inner apply fns)
 	wandb_project: str = "TRM Dynamics"							# wandb project name
 	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
 	wandb_run_name: Optional[str] = "dmc_trmd_mlp_s"				# wandb run name (defaults to <seed>)
@@ -205,7 +207,7 @@ def parse_cfg(cfg):
 				cfg[k] = v
 
 		# TRM size
-		if cfg.use_trm_encoder or cfg.use_trm_dynamics:
+		if cfg.use_trm_encoder or cfg.use_trm_dynamics is not None:
 			if cfg.get('trm_size', None) is None:
 				cfg['trm_size'] = cfg.model_size
 			assert cfg.trm_size in TRM_SIZE.keys(), \
