@@ -3,7 +3,7 @@ from typing import List, Dict
 from dataclasses import dataclass
 
 from common.layers import mlp, SimNorm, NormedLinear, FiLM
-from common.trm.trm_layers import trunc_normal_init_
+from common.trm.trm_layers import trunc_normal_init_, SwiGLU
 
 import torch
 from torch import nn
@@ -45,17 +45,32 @@ class SimpleTRM(nn.Module):
             input_dim = config.latent_dim + 2 * config.latent_dim # wm dim + latent_dim for the y and z carries
             # hidden_mlp_dim = int(config.hidden_size * config.expansion)
             hidden_mlp_dim = self.latent_dim
-            self.fc1 = NormedLinear(input_dim, hidden_mlp_dim)
+            # self.fc1 = NormedLinear(input_dim, hidden_mlp_dim)
+            # self.film = FiLM(config.task_dim + self.action_dim, hidden_mlp_dim)
+            # self.fc2 = NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
+            self.fc1 = nn.Sequential(
+                SwiGLU(input_dim, expansion=config.expansion),
+                NormedLinear(input_dim, config.latent_dim, act=SimNorm(config))
+            )
             self.film = FiLM(config.task_dim + self.action_dim, hidden_mlp_dim)
-            self.fc2 = NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
+            self.fc2 = nn.Sequential(
+                SwiGLU(hidden_mlp_dim, expansion=config.expansion),
+                NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
+            )
+
 
         else:
             input_dim = config.task_dim + config.action_dim + (3 * config.latent_dim) # wm dim + task + action in x, latent_dim for the y and z carries
-            self.mlp = mlp(input_dim, [], config.latent_dim, act=SimNorm(config))
+            # self.mlp = mlp(input_dim, [], config.latent_dim, act=SimNorm(config))
+            self.mlp = nn.Sequential(
+                SwiGLU(input_dim, expansion=config.expansion),
+                NormedLinear(input_dim, config.latent_dim, act=SimNorm(config))
+            )
 
         if self.skip_type == "mlp":
-            self.skip_mlp = mlp(config.hidden_size, [], config.hidden_size, act=nn.Mish())
-
+            self.skip_mlp = mlp(config.latent_dim, [], config.latent_dim, act=nn.Mish())
+        elif self.skip_type == "swiglu":
+            self.skip_mlp = SwiGLU(hidden_size=config.latent_dim, expansion=self.config.expansion)
         self.log_trm_gradnorms = config.log_trm_gradnorms
         self._pending_grad_norms: List[Dict[str, torch.Tensor]] = []
 
@@ -66,8 +81,8 @@ class SimpleTRM(nn.Module):
     def initial_carry(self, x: torch.Tensor):
         batch_shape = x.shape[:-1]
         # y = trunc_normal_init_(torch.empty(*batch_shape, self.config.hidden_size, device=x.device, dtype=x.dtype), std=0.02)
-        y = x[..., :self.latent_dim].clone()  # warmup carry on part of the input latent state (ablation: no random init, just use the input latent state directly)
-        z = trunc_normal_init_(torch.empty(*batch_shape, self.config.hidden_size, device=x.device, dtype=x.dtype), std=0.02)
+        y = x[..., :self.latent_dim].detach().clone()  # warmup carry on part of the input latent state (ablation: no random init, just use the input latent state directly)
+        z = trunc_normal_init_(torch.empty(*batch_shape, self.config.latent_dim, device=x.device, dtype=x.dtype), std=0.02)
         return SimpleTRMCarry(x, y, z)
 
     def _apply_film(self, carry: SimpleTRMCarry) -> torch.Tensor:
@@ -84,7 +99,7 @@ class SimpleTRM(nn.Module):
         return self.mlp(torch.cat([carry.x, carry.y, carry.z], dim=-1))
 
     def _skip(self, out: torch.Tensor, before: torch.Tensor) -> torch.Tensor:
-        if self.skip_type == "mlp":
+        if self.skip_type == "mlp" or self.skip_type == "swiglu":
             return out + self.skip_mlp(before)
         elif self.skip_type == "additive":
             return out + before
@@ -94,60 +109,34 @@ class SimpleTRM(nn.Module):
     # Not compiled: forward is absorbed into the outer loss_fn compile (reduce-overhead).
     # Compiling _apply_* independently would create graph breaks in that outer trace.
     def forward(self, carry: SimpleTRMCarry):
-        # Pin requires_grad=True on carry state before any _apply_fn calls. torch.no_grad()
-        # prevents autograd graph construction regardless of this flag; it's set here so
-        # that dynamo sees the same requires_grad on every call to _apply_fn (warmup and
-        # final pass alike) and doesn't recompile NormedLinear for mismatched guard states.
-        carry.z.requires_grad_(True)
-        carry.y.requires_grad_(True)
-
-        # H_cycles-1 warmup passes: no_grad prevents building autograd nodes, and we
-        # restore requires_grad=True on carry state after each no_grad output (which
-        # always produces requires_grad=False) to keep inputs consistent for _apply_fn.
-        with torch.no_grad():
-            for _ in range(self.config.H_cycles - 1):
-                for _ in range(self.config.L_cycles):
-                    z_before = carry.z
-                    carry.z = self._apply_fn(carry)
-                    if self.use_skip:
-                        carry.z = self._skip(carry.z, z_before)
-                    carry.z.requires_grad_(True)
-                y_before = carry.y.clone()
-                carry.y = self._apply_fn(carry)
-                if self.use_skip:
-                    carry.y = self._skip(carry.y, y_before)
-                carry.y.requires_grad_(True)
-
-        # During inference/planning grad is already disabled; use detached carry so the
-        # path is identical to warmup and no separate compilation branch is needed.
-        if not torch.is_grad_enabled():
-            for _ in range(self.config.L_cycles):
-                z_before = carry.z
-                carry.z = self._apply_fn(carry.detached())
-                if self.use_skip:
-                    carry.z = self._skip(carry.z, z_before)
-            y_before = carry.y
-            carry.y = self._apply_fn(carry.detached())
-            if self.use_skip:
-                carry.y = self._skip(carry.y, y_before)
-            return carry.y
-
-        # Ensure carry.z has requires_grad=True so the grad pass always sees the same
-        # guard state regardless of how initial_carry initialised the tensor.
-        carry.z = carry.z.detach().requires_grad_(True)
         step_norms: Dict[str, torch.Tensor] = {}
         if self.log_trm_gradnorms and self.training:
             self._pending_grad_norms.append(step_norms)
 
+        # H_cycles-1 warmup passes: detach outputs instead of using torch.no_grad(), so
+        # grad_mode stays constant for _apply_fn across all call sites (no_grad would cause
+        # dynamo to compile _apply_fn separately for each grad_mode state it encounters).
+        # Passing z_before.detach() to _skip normalises before.requires_grad=False so that
+        # guard never varies — the requires_grad_(True) workarounds are no longer needed.
+        for _ in range(self.config.H_cycles - 1):
+            for _ in range(self.config.L_cycles):
+                z_before = carry.z
+                carry.z = self._apply_fn(carry).detach()
+                if self.use_skip:
+                    carry.z = self._skip(carry.z, z_before.detach())
+            y_before = carry.y
+            carry.y = self._apply_fn(carry).detach()
+            if self.use_skip:
+                carry.y = self._skip(carry.y, y_before.detach())
+
+        # Final cycle with grad
         for i in range(self.config.L_cycles):
             z_before = carry.z
             carry.z = self._apply_fn(carry)
             if self.use_skip:
                 carry.z = self._skip(carry.z, z_before)
-            
-            if self.log_trm_gradnorms and self.training:
-                if carry.z.requires_grad:
-                    carry.z.register_hook(lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()}))
+            if self.log_trm_gradnorms and self.training and carry.z.requires_grad:
+                carry.z.register_hook(lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()}))
 
         y_before = carry.y
         carry.y = self._apply_fn(carry)
@@ -158,6 +147,11 @@ class SimpleTRM(nn.Module):
 
         return carry.y
 
+    def drain_grad_norms(self) -> List[Dict[str, torch.Tensor]]:
+        result = self._pending_grad_norms
+        self._pending_grad_norms = []
+        return result
+
     def __repr__(self):
         lines = [f"SimpleTRM(H_cycles={self.config.H_cycles}, L_cycles={self.config.L_cycles}, skip={self.skip_type or 'none'})"]
         if self.use_film:
@@ -166,6 +160,6 @@ class SimpleTRM(nn.Module):
             lines.append(f"  (fc2): {self.fc2}")
         else:
             lines.append(f"  (mlp): {self.mlp}")
-        if self.skip_type == "mlp":
+        if self.skip_type == "mlp" or self.skip_type == "swiglu":
             lines.append(f"  (skip_mlp): {self.skip_mlp}")
         return "\n".join(lines)

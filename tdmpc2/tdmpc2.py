@@ -461,14 +461,13 @@ class TDMPC2(torch.nn.Module):
 
 		# Log per-recursion-step gradient norms through SimpleTRM final pass
 		if self.cfg.use_trm_dynamics == "simple":
-			pending = self.model._dynamics._pending_grad_norms
+			pending = self.model._dynamics.drain_grad_norms()
 			if pending:
 				keys = pending[0].keys()
 				for key in keys:
 					norms = [d[key] for d in pending if key in d]
 					if norms:
 						info[f"dyn_step_grad_norm_{key}"] = torch.stack(norms).mean()
-				pending.clear()
 
 		# Log per-recursion-step gradient norms through TRM dynamics final pass
 		if self.cfg.use_trm_dynamics == "trm":
