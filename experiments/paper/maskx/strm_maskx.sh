@@ -37,12 +37,12 @@ for SEED in "${SEEDS[@]}"; do
         model_size="S" \
         wandb_project="TRM Dynamics" \
         wandb_entity="trm-dynamics" \
-        wandb_run_name="smp_s${SEED}_384ld_2h6l_sisw_maskx_nofilm" \
+        wandb_run_name="smp_s${SEED}_16ld_2h6l_sisw_maskx_nofilm" \
         enable_wandb=True \
         H_cycles=2 \
         L_cycles=6 \
         seed="$SEED" \
-        latent_dim=384 \
+        latent_dim=16 \
         use_film_dynamics=False \
         use_simple_trm_skip_connections=True \
         simple_trm_skip_type="swiglu" \
