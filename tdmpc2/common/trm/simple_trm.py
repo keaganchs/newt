@@ -34,6 +34,7 @@ class SimpleTRM(nn.Module):
         self.use_film = config.use_film_dynamics
         self.use_skip = config.use_simple_trm_skip_connections
         self.skip_type = config.simple_trm_skip_type if self.use_skip else None
+        self.mask_x_for_y = config.rrm_mask_x_for_y_update
         self.latent_dim = config.latent_dim
 
         if self.use_film:
@@ -45,18 +46,19 @@ class SimpleTRM(nn.Module):
             input_dim = config.latent_dim + 2 * config.latent_dim # wm dim + latent_dim for the y and z carries
             # hidden_mlp_dim = int(config.hidden_size * config.expansion)
             hidden_mlp_dim = self.latent_dim
-            # self.fc1 = NormedLinear(input_dim, hidden_mlp_dim)
-            # self.film = FiLM(config.task_dim + self.action_dim, hidden_mlp_dim)
-            # self.fc2 = NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
-            self.fc1 = nn.Sequential(
-                SwiGLU(input_dim, expansion=config.expansion),
-                NormedLinear(input_dim, config.latent_dim, act=SimNorm(config))
-            )
+            self.fc1 = NormedLinear(input_dim, hidden_mlp_dim)
             self.film = FiLM(config.task_dim + self.action_dim, hidden_mlp_dim)
-            self.fc2 = nn.Sequential(
-                SwiGLU(hidden_mlp_dim, expansion=config.expansion),
-                NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
-            )
+            self.fc2 = NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
+
+            # self.fc1 = nn.Sequential(
+            #     SwiGLU(input_dim, expansion=config.expansion),
+            #     NormedLinear(input_dim, config.latent_dim, act=SimNorm(config))
+            # )
+            # self.film = FiLM(config.task_dim + self.action_dim, hidden_mlp_dim)
+            # self.fc2 = nn.Sequential(
+            #     SwiGLU(hidden_mlp_dim, expansion=config.expansion),
+            #     NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
+            # )
 
 
         else:
@@ -85,18 +87,21 @@ class SimpleTRM(nn.Module):
         z = trunc_normal_init_(torch.empty(*batch_shape, self.config.latent_dim, device=x.device, dtype=x.dtype), std=0.02)
         return SimpleTRMCarry(x, y, z)
 
-    def _apply_film(self, carry: SimpleTRMCarry) -> torch.Tensor:
+    def _apply_film(self, carry: SimpleTRMCarry, mask_x: bool = False) -> torch.Tensor:
         latent_dim = self.config.latent_dim
         task_dim = self.config.task_dim
         z_initial = carry.x[..., :latent_dim]
         task_emb = carry.x[..., latent_dim:latent_dim + task_dim]
         action = carry.x[..., latent_dim + task_dim:]
         cond = torch.cat([task_emb, action], dim=-1)
+        if mask_x:
+            z_initial = torch.zeros_like(z_initial)
         h = self.fc1(torch.cat([z_initial, carry.y, carry.z], dim=-1))
         return self.fc2(self.film(h, cond))
 
-    def _apply_mlp(self, carry: SimpleTRMCarry) -> torch.Tensor:
-        return self.mlp(torch.cat([carry.x, carry.y, carry.z], dim=-1))
+    def _apply_mlp(self, carry: SimpleTRMCarry, mask_x: bool = False) -> torch.Tensor:
+        x = torch.zeros_like(carry.x) if mask_x else carry.x
+        return self.mlp(torch.cat([x, carry.y, carry.z], dim=-1))
 
     def _skip(self, out: torch.Tensor, before: torch.Tensor) -> torch.Tensor:
         if self.skip_type == "mlp" or self.skip_type == "swiglu":
@@ -125,7 +130,7 @@ class SimpleTRM(nn.Module):
                 if self.use_skip:
                     carry.z = self._skip(carry.z, z_before.detach())
             y_before = carry.y
-            carry.y = self._apply_fn(carry).detach()
+            carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y).detach()
             if self.use_skip:
                 carry.y = self._skip(carry.y, y_before.detach())
 
@@ -139,7 +144,7 @@ class SimpleTRM(nn.Module):
                 carry.z.register_hook(lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()}))
 
         y_before = carry.y
-        carry.y = self._apply_fn(carry)
+        carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y)
         if self.use_skip:
             carry.y = self._skip(carry.y, y_before)
         if self.log_trm_gradnorms and self.training and carry.y.requires_grad:
