@@ -140,15 +140,19 @@ class SimpleTRM(nn.Module):
             carry.z = self._apply_fn(carry)
             if self.use_skip:
                 carry.z = self._skip(carry.z, z_before)
-            if self.log_trm_gradnorms and self.training and carry.z.requires_grad:
-                carry.z.register_hook(lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()}))
+            if self.log_trm_gradnorms and self.training:
+                if carry.z.requires_grad:
+                    carry.z.register_hook(lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()}))
+                step_norms[f"z_{i}_delta"] = (carry.z.detach() - z_before.detach()).norm()
 
         y_before = carry.y
         carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y)
         if self.use_skip:
             carry.y = self._skip(carry.y, y_before)
-        if self.log_trm_gradnorms and self.training and carry.y.requires_grad:
-            carry.y.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
+        if self.log_trm_gradnorms and self.training:
+            if carry.y.requires_grad:
+                carry.y.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
+            step_norms["y_delta"] = (carry.y.detach() - y_before.detach()).norm()
 
         return carry.y
 
