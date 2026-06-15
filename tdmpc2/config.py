@@ -92,16 +92,18 @@ class Config:
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
-	use_film_dynamics: bool = False							# whether to use FiLM conditioning for the task embedding in the dynamics model
+	use_film_dynamics: bool = True							# whether to use FiLM conditioning for the task embedding in the dynamics model
 	use_simple_trm_skip_connections: bool = True			# whether to add residual skip connections across z/y recursion cycles in SimpleTRM
-	simple_trm_skip_type: str = "additive"						# skip connection type for SimpleTRM: "additive" (z + z_before) or "mlp" (z + skip_mlp(z_before))
+	simple_trm_skip_type: str = "swiglu"						# skip connection type for SimpleTRM: one of ["additive", "mlp", "swiglu"]
+	rrm_mask_x_for_y_update: bool = True					# zero-mask x (WM latent) during y carry updates; with FiLM only the WM latent is masked, task/action still condition via FiLM
 
 	# logging
 	log_trm_gradnorms: bool = True							# log per-step gradient norms through SimpleTRM recursion (disables torch.compile on inner apply fns)
 	wandb_project: str = "TRM Dynamics"							# wandb project name
 	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
-	wandb_run_name: Optional[str] = "dmc_trmd_mlp_s"				# wandb run name (defaults to <seed>)
-	enable_wandb: bool = False								# whether to enable wandb logging
+	wandb_group: Optional[str] = "strm_16ld_2h6l_sisw"							# wandb group name override (defaults to a combination of config options, seen in tdmpc2/common/logger.py)
+	wandb_run_name: Optional[str] = "dmc_trmd_simple_s_s0_16ld_2h6l_swsw"				# wandb run name (defaults to <seed>)
+	enable_wandb: bool = True								# whether to enable wandb logging
 
 	# misc
 	multiproc: bool = True									# whether to use multiple GPUs (will use all visible GPUs)
@@ -125,6 +127,7 @@ class Config:
 	num_state_obs_per_token: int = 8						# Number of values in the state observation vector to place in each token. Affects the sequence length
 	pooling_strategy: str = "mean_obs_only"					# pooling strategy for transformer encoder output, one of ["mean", "cls", "mean_obs_only"]
 	use_trm_hidden_state_simnorm: bool = True				# whether to apply SimNorm to the hidden state before pooling
+	srm_truncation_length: int = 3							# Number of recursion steps that are computed with gradients (for truncated BPTT)
 
 	# Transformer config
 	hidden_size: int = 512									# Size for z and y in the TRM, normally set to latent_dim
