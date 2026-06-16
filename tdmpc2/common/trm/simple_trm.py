@@ -63,11 +63,11 @@ class SimpleTRM(nn.Module):
 
         else:
             input_dim = config.task_dim + config.action_dim + (3 * config.latent_dim) # wm dim + task + action in x, latent_dim for the y and z carries
-            # self.mlp = mlp(input_dim, [], config.latent_dim, act=SimNorm(config))
-            self.mlp = nn.Sequential(
-                SwiGLU(input_dim, expansion=config.expansion),
-                NormedLinear(input_dim, config.latent_dim, act=SimNorm(config))
-            )
+            self.mlp = mlp(input_dim, [], config.latent_dim, act=SimNorm(config))
+            # self.mlp = nn.Sequential(
+            #     SwiGLU(input_dim, expansion=config.expansion),
+            #     NormedLinear(input_dim, config.latent_dim, act=SimNorm(config))
+            # )
 
         if self.skip_type == "mlp":
             self.skip_mlp = mlp(config.latent_dim, [], config.latent_dim, act=nn.Mish())
