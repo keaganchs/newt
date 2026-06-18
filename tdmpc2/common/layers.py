@@ -229,6 +229,9 @@ def dyn(cfg, out={}):
 	elif cfg.use_trm_dynamics == "simple":
 		from common.trm.simple_trm import SimpleTRM
 		out = SimpleTRM(cfg).to(torch.device('cuda'))
+	elif cfg.use_trm_dynamics == "srm":
+		from common.trm.simple_recursion_model import SRM
+		out = SRM(cfg).to(torch.device('cuda'))
 	elif cfg.use_film_dynamics:
 		out = FiLMDynamics(cfg)
 	else:
