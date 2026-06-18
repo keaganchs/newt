@@ -459,6 +459,13 @@ class TDMPC2(torch.nn.Module):
 						info[f"enc_step_grad_norm_{key}"] = torch.stack(norms).mean()
 				pending.clear()
 
+		# Log latent-state delta for default MLP dynamics as a baseline
+		if self.cfg.use_trm_dynamics is None and not self.cfg.use_film_dynamics:
+			pending = self.model._pending_wm_z_deltas
+			if pending:
+				info["wm_z_delta"] = torch.stack(pending).mean()
+				pending.clear()
+
 		# Log per-recursion-step gradient norms through SimpleTRM final pass
 		if self.cfg.use_trm_dynamics == "simple":
 			pending = self.model._dynamics.drain_grad_norms()
