@@ -49,6 +49,7 @@ class WorldModel(nn.Module):
 		self._Qs.hard_update_target()
 		self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
 		self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
+		self._pending_wm_z_deltas = []
 
 	def __repr__(self):
 		repr = 'Newt World Model\n'
@@ -211,7 +212,7 @@ class WorldModel(nn.Module):
 			init_carry=self._dynamics.initial_carry(x)
 			out = self._dynamics(init_carry, x)[1]['logits']
 			return out.view(*obs.shape[:-1], -1)
-		elif self.cfg.use_trm_dynamics == "simple":
+		elif self.cfg.use_trm_dynamics in ("simple", "srm"):
 			x = self.task_emb(z, task)
 			x = torch.cat([x, a], dim=-1)
 			batch_shape = x.shape[:-1]
@@ -221,9 +222,13 @@ class WorldModel(nn.Module):
 			out = self._dynamics(init_carry)
 			return out.view(*batch_shape, -1)
 		else:
+			z_in = z
 			z = self.task_emb(z, task)
 			z = torch.cat([z, a], dim=-1)
-			return self._dynamics(z)
+			out = self._dynamics(z)
+			if self.cfg.log_trm_gradnorms and self.training:
+				self._pending_wm_z_deltas.append((out.detach() - z_in.detach()).norm())
+			return out
 
 	def reward(self, z, a, task):
 		"""
