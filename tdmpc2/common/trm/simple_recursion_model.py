@@ -67,7 +67,7 @@ class SRM(nn.Module):
         # f: the shared recursive core.
         self.net = mlp(
             net_input_dim,
-            [],
+            [512, 512],
             config.latent_dim,
             act=SimNorm(config),
         )
