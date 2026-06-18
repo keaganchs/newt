@@ -94,6 +94,13 @@ def cfg_to_group(cfg, return_list=False):
 		skip = f"{cfg.simple_trm_skip_type[:3]}skip" if cfg.use_simple_trm_skip_connections else None
 		base.extend([t for t in [run_type, size, latent_dim, cycles, film, skip] if t])
 	# Newt groups
+	elif cfg.use_film_dynamics == "srm":
+		run_type = "srm"
+		latent_dim = f"{cfg.latent_dim}ld"
+		cycles = f"{cfg.H_cycles}h{cfg.L_cycles}l"
+		truncation_len = f"t{cfg.srm_truncation_length}"
+		film = "film" if cfg.use_film_dynamics else None
+		base.extend([t for t in [run_type, latent_dim, cycles, truncation_len, film] if t])
 	else:
 		run_type = "newt"
 		size = cfg.model_size if cfg.model_size else "custom"
