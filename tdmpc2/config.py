@@ -38,6 +38,7 @@ class Config:
 	value_coef: float = 0.1									# coefficient for value prediction loss
 	consistency_coef: float = 20.0							# coefficient for latent consistency loss
 	prior_coef: float = 10.0								# coefficient for bc prior loss
+	sigreg_coef: float = 1.0								# coefficient for SIGReg isotropic-Gaussian regularization loss (only used when wm_regularization_type="sigreg")
 	rho: float = 0.5										# temporal weight coefficient for model losses
 	lr: float = 3e-4										# global learning rate
 	enc_lr_scale: float = 0.3								# encoder learning rate scale (wrt global lr); original trm implementation uses 1e-4 for layers and 1e-2 for the embedding layer
@@ -92,8 +93,12 @@ class Config:
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
-	use_film_dynamics: bool = True							# whether to use FiLM conditioning for the task embedding in the dynamics model
-	use_simple_trm_skip_connections: bool = True			# whether to add residual skip connections across z/y recursion cycles in SimpleTRM
+	wm_regularization_type: str = "simnorm"					# latent regularization: "simnorm" (simplicial embedding activation on latent outputs) or "sigreg" (Sketched Isotropic Gaussian Regularization loss; disables SimNorm on encoder/dynamics outputs)
+	sigreg_knots: int = 17									# number of quadrature knots for the SIGReg Epps-Pulley statistic
+	sigreg_num_proj: int = 1024								# number of random 1D projections per SIGReg evaluation
+	use_film_dynamics: bool = False							# whether to use FiLM conditioning for the task embedding in the dynamics model
+	xl_dynamics_mlp: bool = False							# for the default (non-TRM, non-FiLM) dynamics: use a larger [512, 512] hidden MLP instead of a single linear layer
+	use_simple_trm_skip_connections: bool = False			# whether to add residual skip connections across z/y recursion cycles in SimpleTRM
 	simple_trm_skip_type: str = "swiglu"						# skip connection type for SimpleTRM: one of ["additive", "mlp", "swiglu"]
 	rrm_mask_x_for_y_update: bool = True					# zero-mask x (WM latent) during y carry updates; with FiLM only the WM latent is masked, task/action still condition via FiLM
 
@@ -101,9 +106,9 @@ class Config:
 	log_trm_gradnorms: bool = True							# log per-step gradient norms through SimpleTRM recursion (disables torch.compile on inner apply fns)
 	wandb_project: str = "TRM Dynamics"							# wandb project name
 	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
-	wandb_group: Optional[str] = "strm_16ld_2h6l_sisw"							# wandb group name override (defaults to a combination of config options, seen in tdmpc2/common/logger.py)
-	wandb_run_name: Optional[str] = "dmc_trmd_simple_s_s0_16ld_2h6l_swsw"				# wandb run name (defaults to <seed>)
-	enable_wandb: bool = True								# whether to enable wandb logging
+	wandb_group: Optional[str] = None								# wandb group name override (defaults to a combination of config options, seen in tdmpc2/common/logger.py)
+	wandb_run_name: Optional[str] = "dmc_strm_16ld_4h3l_simnorm"				# wandb run name (defaults to <seed>)
+	enable_wandb: bool = False								# whether to enable wandb logging
 
 	# misc
 	multiproc: bool = True									# whether to use multiple GPUs (will use all visible GPUs)
@@ -116,7 +121,7 @@ class Config:
 
 	# TRM config, most options are overridden by `model_size` or `trm_size` if specified
 	use_trm_encoder: bool = False							# whether to use TRM encoder for state observations
-	use_trm_dynamics: Optional[str] = "simple"					# dynamics model type: None, "simple", or "trm"
+	use_trm_dynamics: Optional[str] = "simple"					# dynamics model type: None, "simple", "trm", or "srm"
 	mlp_t: bool = True 										# use mlp on L instead of transformer
 	trm_mlp_mixer_type: str = "swiglu"						# type of MLP mixer for the TRM, one of ["swiglu", "simnorm", "linear"]
 	trm_mlp_output_type: str = "swiglu"					# type of MLP for projecting TRM output, one of ["swiglu", "simnorm", "linear"]	
@@ -168,8 +173,9 @@ class Config:
 	num_task_tokens: Optional[int] = None	
 	num_state_tokens: Optional[int] = None
 	num_rgb_tokens: Optional[int] = None
-	obs_pad_len: Optional[int] = None 							# Number of zeros needed to pad the state observation when projecting to tokens					
+	obs_pad_len: Optional[int] = None 							# Number of zeros needed to pad the state observation when projecting to tokens
 	seq_len: Optional[int] = None  							# sequence length for TRM: obs_state + obs_rgb + task_emb_len
+	num_dynamics_params: Optional[int] = None 					# learnable parameter count of the dynamics model (filled in WorldModel.__init__; for sorting runs in WandB)
 
 	get = lambda self, val, default=None: getattr(self, val, default)
 
@@ -218,6 +224,9 @@ def parse_cfg(cfg):
 			for k, v in TRM_SIZE[cfg.trm_size].items():
 				if k not in cli_overrides:
 					cfg[k] = v
+
+	assert cfg.wm_regularization_type in ("simnorm", "sigreg"), \
+		f'Invalid wm_regularization_type {cfg.wm_regularization_type}. Must be "simnorm" or "sigreg".'
 
 	# Set defaults
 	cfg.tasks = TASK_SET.get(cfg.task, [cfg.task] * cfg.num_envs)
