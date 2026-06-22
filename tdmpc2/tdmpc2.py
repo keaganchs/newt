@@ -49,6 +49,13 @@ class TDMPC2(torch.nn.Module):
 		self.rho = torch.pow(self.cfg.rho, torch.arange(self.cfg.horizon+1, device=self.device))
 		self.rho = self.rho / self.rho.sum()
 
+		# SIGReg replaces SimNorm's implicit anti-collapse role when selected (the latent
+		# outputs are left unconstrained and regularized toward an isotropic Gaussian here).
+		if self.cfg.wm_regularization_type == "sigreg":
+			self.sigreg = math.SIGReg(knots=self.cfg.sigreg_knots, num_proj=self.cfg.sigreg_num_proj).to(self.device)
+		else:
+			self.sigreg = None
+
 		# Compile methods for faster training/inference
 		if self.compile and self.cfg.rank == 0:
 			print('Compiling methods...')
@@ -396,17 +403,28 @@ class TDMPC2(torch.nn.Module):
 			pi_prior_loss = 0
 			pi_info = {}
 
+		# SIGReg anti-collapse regularization on the latent rollout (encoder output + predicted
+		# next-states), treating the batch dim as samples per timestep. Kept *alongside* the
+		# consistency loss: consistency provides the predictive signal while SIGReg prevents the
+		# collapse that SimNorm would otherwise rule out (set consistency_coef=0 to ablate).
+		if self.sigreg is not None:
+			sigreg_loss = self.sigreg(zs)
+		else:
+			sigreg_loss = torch.zeros((), device=self.device)
+
 		total_loss = (
 			self.cfg.consistency_coef * consistency_loss +
 			self.cfg.reward_coef * reward_loss +
 			self.cfg.value_coef * value_loss +
-			self.cfg.prior_coef * pi_prior_loss
+			self.cfg.prior_coef * pi_prior_loss +
+			self.cfg.sigreg_coef * sigreg_loss
 		)
 
 		info = {
 			"consistency_loss": consistency_loss,
 			"reward_loss": reward_loss,
 			"value_loss": value_loss,
+			"sigreg_loss": sigreg_loss,
 			"total_loss": total_loss,
 		}
 		info.update(pi_info)
@@ -465,9 +483,13 @@ class TDMPC2(torch.nn.Module):
 			if pending:
 				info["wm_z_delta"] = torch.stack(pending).mean()
 				pending.clear()
+			pending_cos = self.model._pending_wm_z_cossims
+			if pending_cos:
+				info["wm_z_cossim"] = torch.stack(pending_cos).mean()
+				pending_cos.clear()
 
-		# Log per-recursion-step gradient norms through SimpleTRM final pass
-		if self.cfg.use_trm_dynamics == "simple":
+		# Log per-recursion-step gradient norms through SimpleTRM / SRM final pass
+		if self.cfg.use_trm_dynamics in ("simple", "srm"):
 			pending = self.model._dynamics.drain_grad_norms()
 			if pending:
 				keys = pending[0].keys()
