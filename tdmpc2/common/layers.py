@@ -23,7 +23,21 @@ class SimNorm(nn.Module):
 
 	def __repr__(self):
 		return f"SimNorm(dim={self.dim})"
-	
+
+
+def latent_act(cfg):
+	"""Activation applied to encoder/dynamics latent outputs.
+
+	With "simnorm" regularization the latent is projected onto simplices (the default,
+	which implicitly prevents representation collapse). With "sigreg" the latent is left
+	unconstrained (identity) so that the SIGReg loss can regularize its distribution
+	toward an isotropic Gaussian instead — the two mechanisms are mutually exclusive.
+	The surrounding NormedLinear's LayerNorm is retained in both cases.
+	"""
+	if cfg.wm_regularization_type == "sigreg":
+		return nn.Identity()
+	return SimNorm(cfg)
+
 
 class NormedLinear(nn.Linear):
 	"""
@@ -101,7 +115,7 @@ class FiLMDynamics(nn.Module):
 		self.task_dim = cfg.task_dim
 		self.fc1 = NormedLinear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim)
 		self.film = FiLM(cfg.task_dim, cfg.mlp_dim)
-		self.fc2 = NormedLinear(cfg.mlp_dim, cfg.latent_dim, act=SimNorm(cfg))
+		self.fc2 = NormedLinear(cfg.mlp_dim, cfg.latent_dim, act=latent_act(cfg))
 
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
 		z = x[..., :self.latent_dim]
@@ -211,9 +225,9 @@ def enc(cfg, out={}):
 		out['state'] = TRM(cfg, model_type="encoder").to(torch.device('cuda'))
 	else:
 		if cfg.obs == 'state':
-			out['state'] = mlp(cfg.obs_shape['state'][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
+			out['state'] = mlp(cfg.obs_shape['state'][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=latent_act(cfg))
 		elif cfg.obs == 'rgb':
-			out['state'] = mlp(cfg.obs_shape['state'][0] + cfg.task_dim + cfg.obs_shape['rgb'][0], max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
+			out['state'] = mlp(cfg.obs_shape['state'][0] + cfg.task_dim + cfg.obs_shape['rgb'][0], max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=latent_act(cfg))
 		else:
 			raise NotImplementedError(f"Unexpected observation type: {cfg.obs}")
 	return nn.ModuleDict(out)
@@ -235,7 +249,8 @@ def dyn(cfg, out={}):
 	elif cfg.use_film_dynamics:
 		out = FiLMDynamics(cfg)
 	else:
-		out = mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, [], cfg.latent_dim, act=SimNorm(cfg))
+		hidden_dims = [512, 512] if cfg.xl_dynamics_mlp else []
+		out = mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, hidden_dims, cfg.latent_dim, act=latent_act(cfg))
 
 	return out
 

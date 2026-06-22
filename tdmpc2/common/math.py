@@ -1,6 +1,44 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import LambdaLR
+
+
+class SIGReg(nn.Module):
+	"""Sketched Isotropic Gaussian Regularizer.
+
+	Pushes a batch of latents towards a standard isotropic Gaussian by penalising
+	the Epps-Pulley statistic (a goodness-of-fit test against N(0, I)) averaged over
+	many random 1D projections. This replaces SimNorm's implicit anti-collapse role
+	when wm_regularization_type="sigreg".
+
+	Reference: https://arxiv.org/abs/2511.08544 (LeWorldModel / LeJEPA).
+	Adapted from stable-worldmodel's implementation; rewritten without in-place ops
+	so it traces cleanly under torch.compile.
+	"""
+
+	def __init__(self, knots: int = 17, num_proj: int = 1024):
+		super().__init__()
+		self.num_proj = num_proj
+		t = torch.linspace(0, 3, knots, dtype=torch.float32)
+		dt = 3 / (knots - 1)
+		weights = torch.full((knots,), 2 * dt, dtype=torch.float32)
+		weights[[0, -1]] = dt
+		window = torch.exp(-t.square() / 2.0)
+		self.register_buffer('t', t)
+		self.register_buffer('phi', window)
+		self.register_buffer('weights', weights * window)
+
+	def forward(self, proj):
+		"""proj: (T, B, D) — Epps-Pulley statistic uses the B dimension as samples."""
+		# Random 1D projections, each normalised to unit norm.
+		A = torch.randn(proj.size(-1), self.num_proj, device=proj.device, dtype=proj.dtype)
+		A = A / A.norm(p=2, dim=0, keepdim=True)
+		# Epps-Pulley statistic: compare empirical characteristic function to N(0,1)'s.
+		x_t = (proj @ A).unsqueeze(-1) * self.t
+		err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
+		statistic = (err @ self.weights) * proj.size(-2)
+		return statistic.mean()  # average over projections and time
 
 
 def soft_ce(pred, target, cfg):
