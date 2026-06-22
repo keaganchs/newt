@@ -1,12 +1,13 @@
-from typing import Dict
+from typing import Dict, List
 
 from dataclasses import dataclass
 
-from common.layers import mlp, SimNorm, NormedLinear, FiLM
+from common.layers import mlp, SimNorm, NormedLinear, FiLM, latent_act
 from common.trm.trm_layers import trunc_normal_init_, SwiGLU
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from config import Config
 
@@ -65,17 +66,18 @@ class SRM(nn.Module):
             net_input_dim = config.latent_dim + x_dim + config.hidden_size
 
         # f: the shared recursive core.
+        hidden_dims = [512, 512] if config.xl_dynamics_mlp else []
         self.net = mlp(
             net_input_dim,
-            [512, 512],
+            hidden_dims,
             config.latent_dim,
-            act=SimNorm(config),
+            act=latent_act(config),
         )
 
         self._init_weights()
 
         if self.log_gradnorms:
-            self.step_norms: Dict[str, float] = {}
+            self._pending_grad_norms: List[Dict[str, torch.Tensor]] = []
         else:
             self.forward = torch.compile(self.forward, fullgraph=True)
 
@@ -104,25 +106,43 @@ class SRM(nn.Module):
         return self.context_net(z)
 
     def forward(self, carry: SRMCarry) -> torch.Tensor:
+        step_norms: Dict[str, torch.Tensor] = {}
+        if self.log_gradnorms and self.training:
+            self._pending_grad_norms.append(step_norms)
+
         for h in range(self.H_cycles):
             carry.context = self._compute_context(carry.z)
 
             # First (L_cycles - T) iterations without gradients
             with torch.no_grad():
-                for _ in range(self.nograd_cycles):
+                for l in range(self.nograd_cycles):
+                    z_before = carry.z
                     carry = self._apply_fun(carry)
+                    if self.log_gradnorms and self.training:
+                        name = f"y_h{h}_l{l}"
+                        step_norms[f"{name}_delta"] = (carry.z - z_before).norm()
+                        step_norms[f"{name}_cossim"] = F.cosine_similarity(carry.z, z_before, dim=-1).mean()
 
             # Last T iterations with gradients (truncated BPTT)
             for l in range(self.grad_cycles):
+                z_before = carry.z
                 carry = self._apply_fun(carry)
 
-                if self.log_gradnorms and carry.z.requires_grad:
-                    name = f"h{h}_l{self.nograd_cycles + l}"
-                    carry.z.register_hook(
-                        lambda g, name=name: self.step_norms.__setitem__(name, g.norm().item())
-                    )
+                if self.log_gradnorms and self.training:
+                    name = f"y_h{h}_l{self.nograd_cycles + l}"
+                    if carry.z.requires_grad:
+                        carry.z.register_hook(
+                            lambda g, name=name: step_norms.__setitem__(name, g.detach().norm())
+                        )
+                    step_norms[f"{name}_delta"] = (carry.z.detach() - z_before.detach()).norm()
+                    step_norms[f"{name}_cossim"] = F.cosine_similarity(carry.z.detach(), z_before.detach(), dim=-1).mean()
 
         return carry.z
+
+    def drain_grad_norms(self) -> List[Dict[str, torch.Tensor]]:
+        result = self._pending_grad_norms
+        self._pending_grad_norms = []
+        return result
 
     def __repr__(self):
         lines = [f"SRM(H_cycles={self.H_cycles}, L_cycles={self.L_cycles}, truncation={self.truncation_length}, film={self.use_film})"]

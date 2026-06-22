@@ -2,11 +2,12 @@ from typing import List, Dict
 
 from dataclasses import dataclass
 
-from common.layers import mlp, SimNorm, NormedLinear, FiLM
+from common.layers import mlp, SimNorm, NormedLinear, FiLM, latent_act
 from common.trm.trm_layers import trunc_normal_init_, SwiGLU
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from config import Config
 
@@ -48,7 +49,7 @@ class SimpleTRM(nn.Module):
             hidden_mlp_dim = self.latent_dim
             self.fc1 = NormedLinear(input_dim, hidden_mlp_dim)
             self.film = FiLM(config.task_dim + self.action_dim, hidden_mlp_dim)
-            self.fc2 = NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
+            self.fc2 = NormedLinear(hidden_mlp_dim, config.latent_dim, act=latent_act(config))
 
             # self.fc1 = nn.Sequential(
             #     SwiGLU(input_dim, expansion=config.expansion),
@@ -63,7 +64,8 @@ class SimpleTRM(nn.Module):
 
         else:
             input_dim = config.task_dim + config.action_dim + (3 * config.latent_dim) # wm dim + task + action in x, latent_dim for the y and z carries
-            self.mlp = mlp(input_dim, [512, 512], config.latent_dim, act=SimNorm(config))
+            hidden_dims = [512, 512] if config.xl_dynamics_mlp else []
+            self.mlp = mlp(input_dim, hidden_dims, config.latent_dim, act=latent_act(config))
             # self.mlp = nn.Sequential(
             #     SwiGLU(input_dim, expansion=config.expansion),
             #     NormedLinear(input_dim, config.latent_dim, act=SimNorm(config))
@@ -123,7 +125,7 @@ class SimpleTRM(nn.Module):
         # dynamo to compile _apply_fn separately for each grad_mode state it encounters).
         # Passing z_before.detach() to _skip normalises before.requires_grad=False so that
         # guard never varies — the requires_grad_(True) workarounds are no longer needed.
-        for _ in range(self.config.H_cycles - 1):
+        for h in range(self.config.H_cycles - 1):
             for _ in range(self.config.L_cycles):
                 z_before = carry.z
                 carry.z = self._apply_fn(carry).detach()
@@ -133,6 +135,9 @@ class SimpleTRM(nn.Module):
             carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y).detach()
             if self.use_skip:
                 carry.y = self._skip(carry.y, y_before.detach())
+            if self.log_trm_gradnorms and self.training:
+                step_norms[f"y_{h}_delta"] = (carry.y.detach() - y_before.detach()).norm()
+                step_norms[f"y_{h}_cossim"] = F.cosine_similarity(carry.y.detach(), y_before.detach(), dim=-1).mean()
 
         # Final cycle with grad
         for i in range(self.config.L_cycles):
@@ -150,9 +155,11 @@ class SimpleTRM(nn.Module):
         if self.use_skip:
             carry.y = self._skip(carry.y, y_before)
         if self.log_trm_gradnorms and self.training:
+            h = self.config.H_cycles - 1
             if carry.y.requires_grad:
                 carry.y.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
-            step_norms["y_delta"] = (carry.y.detach() - y_before.detach()).norm()
+            step_norms[f"y_{h}_delta"] = (carry.y.detach() - y_before.detach()).norm()
+            step_norms[f"y_{h}_cossim"] = F.cosine_similarity(carry.y.detach(), y_before.detach(), dim=-1).mean()
 
         return carry.y
 
