@@ -3,9 +3,10 @@ from dataclasses import dataclass
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from config import Config
-from common.layers import mlp, SimNorm
+from common.layers import mlp, SimNorm, latent_act
 from common.trm.trm_layers import trunc_normal_init_, rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
 
 """
@@ -170,8 +171,10 @@ class TRMInner(nn.Module):
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False)
         with torch.no_grad():
             trunc_normal_init_(self.lm_head.weight, std=0.02)  # Match Newt's default nn.Linear init
-        self.lm_head_norm = SimNorm(self.config)  # SimNorm to match baseline encoder output distribution
-        if self.config.use_trm_hidden_state_simnorm:
+        self.lm_head_norm = latent_act(self.config)  # SimNorm (or identity under SIGReg) to match baseline encoder output distribution
+        # SIGReg is incompatible with SimNorm: when selected, also drop the hidden-state SimNorm
+        # so the encoder/dynamics are fully SimNorm-free and the latent can be Gaussian-regularized.
+        if self.config.use_trm_hidden_state_simnorm and self.config.wm_regularization_type != "sigreg":
             self.embed_norm = SimNorm(self.config)  # SimNorm on input to help match the output distribution
             self._apply_embed_norm = self._apply_embed_norm_simnorm
         else:
@@ -385,21 +388,26 @@ class TRMInner(nn.Module):
         # Forward iterations
         z_H, z_L = carry.z_H, carry.z_L
 
-        # H_cycles-1 warmup passes without grad (compiled no-grad variants avoid grad_mode recompile)
-        with torch.no_grad():
-            for _ in range(self.config.H_cycles - 1):
-                z_H_inject = z_H + input_embeddings
-                z_L = self._run_l_nograd(z_L, z_H_inject, cos_sin)
-                z_H = self._H_level_nograd(z_H, z_L, cos_sin)
-
-        # Set up per-step grad norm tracking for the final pass
+        # Set up per-step grad norm / delta tracking (warmup + final pass)
         step_norms: Dict[str, torch.Tensor] = {}
         if self.training:
             self._pending_grad_norms.append(step_norms)
 
+        # H_cycles-1 warmup passes without grad (compiled no-grad variants avoid grad_mode recompile)
+        with torch.no_grad():
+            for h in range(self.config.H_cycles - 1):
+                z_H_inject = z_H + input_embeddings
+                z_L = self._run_l_nograd(z_L, z_H_inject, cos_sin)
+                z_H_before = z_H
+                z_H = self._H_level_nograd(z_H, z_L, cos_sin)
+                if self.training:
+                    step_norms[f"y_{h}_delta"] = (z_H - z_H_before).norm()
+                    step_norms[f"y_{h}_cossim"] = F.cosine_similarity(z_H, z_H_before, dim=-1).mean()
+
         # Final H step: use no-grad compiled variants during inference, grad variants during training.
         # Separate compiled objects per grad context avoid grad_mode guard failures (same as SimpleTRM).
         z_H_inject = z_H + input_embeddings
+        z_H_before = z_H
         if not torch.is_grad_enabled():
             z_L = self._run_l_nograd(z_L, z_H_inject, cos_sin)
             z_H = self._H_level_nograd(z_H, z_L, cos_sin)
@@ -408,6 +416,10 @@ class TRMInner(nn.Module):
             z_H = self._H_level_grad(z_H, z_L, cos_sin)
             if self.training and z_H.requires_grad:
                 z_H.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
+        if self.training:
+            h = self.config.H_cycles - 1
+            step_norms[f"y_{h}_delta"] = (z_H.detach() - z_H_before.detach()).norm()
+            step_norms[f"y_{h}_cossim"] = F.cosine_similarity(z_H.detach(), z_H_before.detach(), dim=-1).mean()
 
         # LM Outputs
         new_carry = TRMInnerCarry(z_H=z_H.detach(), z_L=z_L.detach())  # New carry no grad
@@ -480,7 +492,7 @@ class TRM(nn.Module):
                     "Invalid TRM config for SimNorm output MLP: "
                     f"hidden_size={self.config.hidden_size} must be divisible by simnorm_dim={self.config.simnorm_dim}."
                 )
-        if self.config.latent_dim % self.config.simnorm_dim != 0:
+        if self.config.wm_regularization_type == "simnorm" and self.config.latent_dim % self.config.simnorm_dim != 0:
             raise ValueError(
                 "Invalid TRM config for output SimNorm: "
                 f"latent_dim={self.config.latent_dim} must be divisible by simnorm_dim={self.config.simnorm_dim}."
