@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Activate conda environment
-export PYOPENGL_PLATFORM=egl
-export MUJOCO_GL=egl
+# export PYOPENGL_PLATFORM=egl
+export MUJOCO_GL=disable
 export LD_LIBRARY_PATH="/pfss/mlde/workspaces/mlde_wsp_PI_Deramo/miniconda3/lib:$LD_LIBRARY_PATH"
 export LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
