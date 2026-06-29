@@ -43,7 +43,7 @@ for SEED in "${SEEDS[@]}"; do
         wm_regularization_type="sigreg" &
 done
 
-# Newt S with 16ld
+# Newt S with 16ld with the XL dynamics MLP ([512, 512] hidden dims)
 for SEED in "${SEEDS[@]}"; do
     python3 $PYTHON_SCRIPT \
         task="dmcontrol" \
@@ -59,10 +59,11 @@ for SEED in "${SEEDS[@]}"; do
         enable_wandb=True \
         seed="$SEED" \
         latent_dim=16 \
+        xl_dynamics_mlp=True \
         wm_regularization_type="sigreg" &
 done
 
-# Newt S with the XL dynamics MLP ([512, 512] hidden dims)
+# Newt S with the XL dynamics MLP
 for SEED in "${SEEDS[@]}"; do
     python3 $PYTHON_SCRIPT \
         task="dmcontrol" \
