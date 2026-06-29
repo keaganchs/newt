@@ -27,16 +27,17 @@ for SEED in "${SEEDS[@]}"; do
         model_size="S" \
         wandb_project="TRM Dynamics" \
         wandb_entity="trm-dynamics" \
-        wandb_run_name="smp_s${SEED}_384ld_2h6l_sisw_maskx_film" \
+        wandb_run_name="smp_s${SEED}_384ld_4h3l_sisw_mx_film_sigreg" \
         enable_wandb=True \
-        H_cycles=2 \
-        L_cycles=6 \
+        H_cycles=4 \
+        L_cycles=3 \
         seed="$SEED" \
         latent_dim=384 \
         use_film_dynamics=True \
         use_simple_trm_skip_connections=True \
         simple_trm_skip_type="swiglu" \
-        rrm_mask_x_for_y_update=True &
+        rrm_mask_x_for_y_update=True \
+        wm_regularization_type="sigreg" &
 done
 
 for SEED in "${SEEDS[@]}"; do
@@ -50,16 +51,17 @@ for SEED in "${SEEDS[@]}"; do
         model_size="S" \
         wandb_project="TRM Dynamics" \
         wandb_entity="trm-dynamics" \
-        wandb_run_name="smp_s${SEED}_384ld_2h6l_sisw_maskx_nofilm" \
+        wandb_run_name="smp_s${SEED}_384ld_4h3l_sisw_mx_sigreg" \
         enable_wandb=True \
-        H_cycles=2 \
-        L_cycles=6 \
+        H_cycles=4 \
+        L_cycles=3 \
         seed="$SEED" \
         latent_dim=384 \
         use_film_dynamics=False \
         use_simple_trm_skip_connections=True \
         simple_trm_skip_type="swiglu" \
-        rrm_mask_x_for_y_update=True &
+        rrm_mask_x_for_y_update=True \
+        wm_regularization_type="sigreg" &
 done
 
 wait
