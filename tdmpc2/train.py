@@ -1,5 +1,7 @@
 import os
-os.environ['MUJOCO_GL'] = os.getenv("MUJOCO_GL", 'egl')
+os.environ['MUJOCO_GL'] = os.getenv("MUJOCO_GL", 'egl') # Use 'disable'/'off' for state-only headless runs
+if os.environ['MUJOCO_GL'] == 'egl':
+	os.environ.setdefault('PYOPENGL_PLATFORM', 'egl')
 os.environ['LAZY_LEGACY_OP'] = '0'
 os.environ["TORCH_DISTRIBUTED_TIMEOUT"] = "1800"
 os.environ['TORCHDYNAMO_INLINE_INBUILT_NN_MODULES'] = "1"
