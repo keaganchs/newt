@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from common import math, init
 from tensordict import TensorDict
@@ -51,8 +50,6 @@ class WorldModel(nn.Module):
 		self._Qs.hard_update_target()
 		self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
 		self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
-		self._pending_wm_z_deltas = []
-		self._pending_wm_z_cossims = []
 
 	def __repr__(self):
 		repr = 'Newt World Model\n'
@@ -225,14 +222,9 @@ class WorldModel(nn.Module):
 			out = self._dynamics(init_carry)
 			return out.view(*batch_shape, -1)
 		else:
-			z_in = z
 			z = self.task_emb(z, task)
 			z = torch.cat([z, a], dim=-1)
-			out = self._dynamics(z)
-			if self.cfg.log_trm_gradnorms and self.training:
-				self._pending_wm_z_deltas.append((out.detach() - z_in.detach()).norm())
-				self._pending_wm_z_cossims.append(F.cosine_similarity(out.detach(), z_in.detach(), dim=-1).mean())
-			return out
+			return self._dynamics(z)
 
 	def reward(self, z, a, task):
 		"""

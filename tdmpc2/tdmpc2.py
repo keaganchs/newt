@@ -362,14 +362,26 @@ class TDMPC2(torch.nn.Module):
 		with torch.no_grad():
 			td_targets = self._td_target(next_z, reward, task)
 
+		# Whether to log the WM next-state delta/cosine for the default MLP dynamics as a baseline.
+		# Computed here (not via a side-effect list in WorldModel.next) so the values flow through
+		# loss_fn's returned outputs and don't alias the cudagraph static memory pool.
+		log_wm_delta = (self.cfg.log_trm_gradnorms and self.cfg.use_trm_dynamics is None
+						and not self.cfg.use_film_dynamics)
+
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		z = self.model.encode(obs[0], task[0])
 		zs[0] = z
 		consistency_loss = 0
+		wm_z_delta = 0
+		wm_z_cossim = 0
 		for t, (_action, _next_z, _task) in enumerate(zip(action.unbind(0), next_z.unbind(0), task.unbind(0))):
+			z_prev = z
 			z = self.model.next(z, _action, _task)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.rho[t]
+			if log_wm_delta:
+				wm_z_delta = wm_z_delta + (z.detach() - z_prev.detach()).norm()
+				wm_z_cossim = wm_z_cossim + F.cosine_similarity(z.detach(), z_prev.detach(), dim=-1).mean()
 			zs[t+1] = z
 
 		# Predictions
@@ -428,6 +440,9 @@ class TDMPC2(torch.nn.Module):
 			"total_loss": total_loss,
 		}
 		info.update(pi_info)
+		if log_wm_delta:
+			info["wm_z_delta"] = wm_z_delta / self.cfg.horizon
+			info["wm_z_cossim"] = wm_z_cossim / self.cfg.horizon
 
 		return total_loss, zs.detach(), {k: v.detach() for k, v in info.items()}
 
@@ -477,16 +492,7 @@ class TDMPC2(torch.nn.Module):
 						info[f"enc_step_grad_norm_{key}"] = torch.stack(norms).mean()
 				pending.clear()
 
-		# Log latent-state delta for default MLP dynamics as a baseline
-		if self.cfg.use_trm_dynamics is None and not self.cfg.use_film_dynamics:
-			pending = self.model._pending_wm_z_deltas
-			if pending:
-				info["wm_z_delta"] = torch.stack(pending).mean()
-				pending.clear()
-			pending_cos = self.model._pending_wm_z_cossims
-			if pending_cos:
-				info["wm_z_cossim"] = torch.stack(pending_cos).mean()
-				pending_cos.clear()
+		# (wm_z_delta / wm_z_cossim for the default MLP baseline are returned directly from loss_fn)
 
 		# Log per-recursion-step gradient norms through SimpleTRM / SRM final pass
 		if self.cfg.use_trm_dynamics in ("simple", "srm"):
