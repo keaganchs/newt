@@ -38,7 +38,7 @@ class Config:
 	value_coef: float = 0.1									# coefficient for value prediction loss
 	consistency_coef: float = 20.0							# coefficient for latent consistency loss
 	prior_coef: float = 10.0								# coefficient for bc prior loss
-	sigreg_coef: float = 1.0								# coefficient for SIGReg isotropic-Gaussian regularization loss (only used when wm_regularization_type="sigreg")
+	sigreg_coef: float = 0.1								# coefficient for SIGReg isotropic-Gaussian regularization loss (only used when wm_regularization_type="sigreg")
 	rho: float = 0.5										# temporal weight coefficient for model losses
 	lr: float = 3e-4										# global learning rate
 	enc_lr_scale: float = 0.3								# encoder learning rate scale (wrt global lr); original trm implementation uses 1e-4 for layers and 1e-2 for the embedding layer
