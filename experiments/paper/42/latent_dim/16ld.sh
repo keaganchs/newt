@@ -38,6 +38,7 @@ for SEED in "${SEEDS[@]}"; do
         use_film_dynamics=False \
         use_simple_trm_skip_connections=False \
         rrm_mask_x_for_y_update=True \
+        log_trm_gradnorms=True \
         wm_regularization_type="simnorm" &
 done
 
@@ -63,6 +64,7 @@ for SEED in "${SEEDS[@]}"; do
         use_film_dynamics=False \
         use_simple_trm_skip_connections=False \
         rrm_mask_x_for_y_update=True \
+        log_trm_gradnorms=True \
         wm_regularization_type="simnorm" &
 done
 
