@@ -110,7 +110,7 @@ class Config:
 	dis_loss_coef: float = 1.0								# coefficient for the DIS auxiliary loss (only used when use_dis_loss=True)
 
 	# logging
-	log_trm_gradnorms: bool = True							# log per-step gradient norms through SimpleTRM recursion (disables torch.compile on inner apply fns)
+	log_trm_gradnorms: bool = False							# log per-step gradient norms through SimpleTRM recursion (disables torch.compile on inner apply fns)
 	wandb_project: str = "TRM Dynamics"							# wandb project name
 	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
 	wandb_group: Optional[str] = None								# wandb group name override (defaults to a combination of config options, seen in tdmpc2/common/logger.py)
