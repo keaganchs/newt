@@ -116,7 +116,8 @@ class Timer:
         return cold, mean, std
 
 
-def profile_one(config, h, l, num_envs, warmup, iters, use_cuda_events, compile_full):
+def profile_one(config, h, l, num_envs, warmup, iters, use_cuda_events, compile_full,
+                planning_cycles=None):
     import torch
     import torch.nn.functional as F
 
@@ -126,6 +127,9 @@ def profile_one(config, h, l, num_envs, warmup, iters, use_cuda_events, compile_
 
     # Component microbenchmarks want compile OFF (so boundaries are real, not fused).
     cfg = C.build_cfg(spec, compile=False, log_trm_gradnorms=False)
+    # Reduced-depth planning knob (must be set before build_agent: TDMPC2 deepcopies cfg).
+    if planning_cycles is not None:
+        cfg.planning_H_cycles, cfg.planning_L_cycles = planning_cycles
     env = C.build_env(cfg)
     agent = C.build_agent(cfg)
     buf = C.build_buffer(cfg, capacity=200_000)
@@ -236,12 +240,36 @@ def profile_one(config, h, l, num_envs, warmup, iters, use_cuda_events, compile_
     def do_plan():
         with torch.no_grad():
             agent.plan(plan_obs, t0=t0flag, step=10_000_000, eval_mode=True, task=plan_task)
-    try:
-        cold, mean, std = timer.bench(do_plan, min(warmup, 5), min(iters, 20))
-        result["components"]["planning_mppi (%d iters x %d samples)" % (cfg.iterations, cfg.num_samples)] = \
-            {"cold_ms": round(cold, 4), "steady_ms": round(mean, 4), "std_ms": round(std, 4)}
-    except Exception as ex:
-        result["components"]["planning_mppi"] = {"error": f"{type(ex).__name__}: {ex}"}
+
+    def _bench_plan(label):
+        # profiler runs compile=OFF, so we can freely toggle agent.cfg.planning_* at
+        # runtime (no recompile) to measure planning at different recursion depths.
+        try:
+            cold, mean, std = timer.bench(do_plan, min(warmup, 5), min(iters, 20))
+            result["components"][label] = {"cold_ms": round(cold, 4), "steady_ms": round(mean, 4), "std_ms": round(std, 4)}
+            return mean
+        except Exception as ex:
+            result["components"][label] = {"error": f"{type(ex).__name__}: {ex}"}
+            return None
+
+    # Full-depth planning (recursive core at the training H/L on every MPPI rollout).
+    agent.cfg.planning_H_cycles = None
+    agent.cfg.planning_L_cycles = None
+    full_ms = _bench_plan("planning_mppi_full_depth (%d iters x %d samples, %dh%dl)"
+                          % (cfg.iterations, cfg.num_samples, h, l))
+    # Reduced-depth planning: run the world-model rollouts at a shallower recursion
+    # depth than the training update -> the compute-adaptivity lever.
+    if planning_cycles is not None:
+        ph, pl = planning_cycles
+        agent.cfg.planning_H_cycles = ph
+        agent.cfg.planning_L_cycles = pl
+        red_ms = _bench_plan("planning_mppi_reduced (%dh%dl)" % (ph, pl))
+        if full_ms and red_ms:
+            result["planning_reduced_depth"] = {
+                "training_cycles": f"{h}h{l}l", "planning_cycles": f"{ph}h{pl}l",
+                "full_depth_ms": round(full_ms, 4), "reduced_depth_ms": round(red_ms, 4),
+                "speedup_x": round(full_ms / red_ms, 2),
+            }
     agent.model.train()
 
     # ---- per-cycle dynamics depth sweep ----------------------------------- #
@@ -387,6 +415,10 @@ def print_table(result):
             if v is not None and tt:
                 print(f"    {k:<24} {v:10.4f} ms  ({100*v/tt:5.1f}%)")
         print(f"    {'update_total':<24} {tt:10.4f} ms")
+    prd = result.get("planning_reduced_depth")
+    if prd:
+        print(f"  reduced-depth planning: train {prd['training_cycles']} -> plan {prd['planning_cycles']}  "
+              f"{prd['full_depth_ms']} ms -> {prd['reduced_depth_ms']} ms  ({prd['speedup_x']}x faster)")
     print(f"  peak GPU mem: {result.get('peak_gpu_mem_mb')} MB   "
           f"env_step throughput: {result.get('env_steps_per_sec')} env-steps/s")
 
@@ -399,6 +431,9 @@ def main():
     ap.add_argument("--warmup", type=int, default=15, help="warm iterations before steady-state timing")
     ap.add_argument("--iters", type=int, default=40, help="steady-state iterations to average")
     ap.add_argument("--no-cuda-timer", action="store_true", help="use wall-clock+sync instead of CUDA events")
+    ap.add_argument("--planning-cycles", default=None,
+                    help="run MPPI rollouts at this reduced recursion depth (e.g. 1h1l) and report "
+                         "the planning speedup vs full training depth. See cfg.planning_H_cycles/L_cycles.")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "profile_results.json"))
     args = ap.parse_args()
 
@@ -406,13 +441,15 @@ def main():
     print("Hardware:", json.dumps(hw, indent=2))
     configs = [c.strip() for c in args.config.split(",") if c.strip()]
     cycles = parse_cycles(args.cycles)
+    planning_cycles = parse_cycles(args.planning_cycles)[0] if args.planning_cycles else None
 
     all_results = {"hardware": hw, "runs": []}
     for config in configs:
         for (h, l) in cycles:
             try:
                 res = profile_one(config, h, l, args.num_envs, args.warmup, args.iters,
-                                  not args.no_cuda_timer, compile_full=False)
+                                  not args.no_cuda_timer, compile_full=False,
+                                  planning_cycles=planning_cycles)
                 print_table(res)
                 all_results["runs"].append(res)
             except Exception as ex:

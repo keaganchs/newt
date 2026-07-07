@@ -360,14 +360,25 @@ def classify_bottleneck(levels, hw, total_cores):
         if eff < 0.6 and gpu_util < 50 and cpu_saturated:
             bottleneck = "env_cpu"
             reason.append("throughput stopped scaling while GPU idle and CPU pegged -> ENV/CPU-BOUND")
+        elif eff < 0.6 and gpu_util < 50 and not cpu_saturated:
+            # Neither the GPU nor the CPU is saturated, yet throughput scales sublinearly:
+            # the runs are serialising on per-process overhead (kernel-launch latency, the
+            # Python GIL per process, a single time-sliced CUDA context) rather than on any
+            # hardware resource. NVIDIA MPS lets kernels from different processes run
+            # concurrently and is the lever here; more runs will also keep helping.
+            bottleneck = "latency_overhead"
+            reason.append("throughput sublinear while BOTH GPU (<50%) and CPU (<85%) idle "
+                          "-> LATENCY/OVERHEAD-BOUND (per-process launch/Python overhead). "
+                          "Enable NVIDIA MPS (see mps_control.sh) for concurrent kernels.")
         elif eff < 0.6 and gpu_util >= 50:
             bottleneck = "gpu_compute"
             reason.append("throughput stopped scaling while GPU busy -> GPU-COMPUTE-BOUND")
         elif eff >= 0.8:
             bottleneck = "not_saturated"
-            reason.append("throughput still scaling near-linearly -> not yet saturated at tested levels")
+            reason.append("throughput still scaling near-linearly -> not yet saturated at tested "
+                          "levels; raise --max-concurrency to find the real optimum")
         else:
-            bottleneck = "env_cpu" if cpu_saturated else "gpu_compute"
+            bottleneck = "env_cpu" if cpu_saturated else "latency_overhead"
     return {
         "attributed_bottleneck": bottleneck,
         "throughput_optimal_concurrency": thr_opt,
@@ -489,13 +500,25 @@ def run_driver(args):
     print("\n" + "=" * 78)
     print("RECOMMENDATION (runs per GPU for a downstream scheduler)")
     print("=" * 78)
+    bottlenecks = {s["bottleneck"] for s in sched.values()}
+    still_scaling = any(cd["analysis"]["attributed_bottleneck"] == "not_saturated"
+                        for cd in report["configs"].values())
     for config, s in sched.items():
         print(f"  {config.upper():6s}: {s['runs_per_gpu']} run(s)/GPU   "
               f"[bottleneck: {s['bottleneck']}]")
-    hint = ("Because each run's env workers dominate, reducing --num-envs per run "
-            "(fewer async workers) is the main lever for packing more runs per GPU "
-            "when the bottleneck is env/cpu; it does little when the bottleneck is gpu_memory.")
-    print("\n  " + hint)
+    hints = []
+    if "latency_overhead" in bottlenecks or "gpu_compute" in bottlenecks:
+        hints.append("GPU/CPU underutilised but throughput scales sublinearly -> the runs "
+                     "serialise on per-process overhead. Enable NVIDIA MPS (./mps_control.sh start) "
+                     "so kernels from different runs execute concurrently; expect markedly more "
+                     "runs/GPU. Re-run with --compile to match production kernels.")
+    if still_scaling or True:
+        hints.append("If any config reports 'not_saturated', throughput was still climbing at the "
+                     "cap -- raise --max-concurrency (and --max-env-processes) to find the true optimum.")
+    hints.append("When the bottleneck is env/cpu, reducing --num-envs per run (fewer async workers) "
+                 "packs more runs; it does little when the bottleneck is gpu_memory.")
+    for h in hints:
+        print("\n  " + h)
     print(f"\nWrote {out_path}")
 
 
@@ -513,9 +536,9 @@ def main():
     ap.add_argument("--compile", action="store_true", help="use torch.compile (matches real runs; slower cold start)")
     ap.add_argument("--worker-out", default=None)
     # driver args
-    ap.add_argument("--levels", default="1,2,4,8")
-    ap.add_argument("--max-concurrency", type=int, default=8)
-    ap.add_argument("--max-env-processes", type=int, default=200,
+    ap.add_argument("--levels", default="1,2,4,8,16,24")
+    ap.add_argument("--max-concurrency", type=int, default=24)
+    ap.add_argument("--max-env-processes", type=int, default=600,
                     help="safety cap: skip a level if concurrency*num_envs exceeds this")
     ap.add_argument("--small-cycles", default="1h1l", help="HxL for SMALL (stable default so grad steps run)")
     ap.add_argument("--large-cycles", default="1h1l", help="HxL for LARGE")

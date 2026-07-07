@@ -73,6 +73,12 @@ cores-equivalent per run, then attributes the bottleneck:
 * **gpu_memory** — escalation hit a caught CUDA OOM.
 * **gpu_compute** — aggregate grad-steps/s plateaus while GPU util stays high.
 * **env_cpu** — throughput plateaus while GPU util is low and CPU is pegged.
+* **latency_overhead** — throughput scales sublinearly while *both* GPU (<50 %)
+  and CPU (<85 %) are idle: the runs serialise on per-process overhead
+  (kernel-launch latency, per-process Python GIL, a single time-sliced CUDA
+  context). This is the A100 regime — the lever is **NVIDIA MPS** (see below).
+* **not_saturated** — throughput still climbing near-linearly at the cap; raise
+  `--max-concurrency`.
 
 Outputs a per-config table, a derived GPU-memory ceiling (runs/GPU from the
 level-1 peak), a one-line runs-per-GPU scheduler recommendation, and
@@ -80,14 +86,30 @@ level-1 peak), a one-line runs-per-GPU scheduler recommendation, and
 scheduler).
 
 ```bash
-python bench_concurrency.py --config small,large --levels 1,2,4,8 --num-envs 21 --duration 8
+python bench_concurrency.py --config small,large --num-envs 21 --duration 8   # defaults: levels 1,2,4,8,16,24
 python bench_concurrency.py --config small --num-envs 4        # fewer env workers -> pack more runs
-python bench_concurrency.py --max-env-processes 200            # safety cap on total env workers
+python bench_concurrency.py --compile --duration 20            # match production kernels (slower cold start)
 ```
 
-Key flags: `--levels`, `--max-concurrency`, `--num-envs`, `--duration`,
+Key flags: `--levels` (default `1,2,4,8,16,24`), `--max-concurrency` (default 24),
+`--max-env-processes` (default 600 safety cap), `--num-envs`, `--duration`,
 `--small-cycles/--large-cycles` (default `1h1l` — a numerically stable depth so
-real grad steps run; see the divergence note below), `--compile` (match real runs).
+real grad steps run), `--compile` (match real runs).
+
+### Packing more runs: NVIDIA MPS
+
+When the bottleneck is `latency_overhead` (GPU idle, CPU idle, sublinear scaling),
+the GPU is starved by per-process serialization, not any hardware limit. Start
+**MPS** so kernels from different runs execute concurrently:
+
+```bash
+source ./mps_control.sh start   # per-user MPS daemon, no root; source so env vars persist
+python bench_concurrency.py --compile --max-concurrency 32   # re-measure the ceiling under MPS
+source ./mps_control.sh stop
+```
+
+Prefer MPS over MIG here: MIG caps at 7 isolated slices and can't oversubscribe;
+you want spatial sharing of one 80 GB A100 across many tiny-model runs.
 
 ## Script B — `profile_components.py`
 
@@ -103,13 +125,40 @@ with recursion depth, it also emits a **dynamics depth sweep** (`1h1l,1h2l,2h1l,
 and the **marginal ms per extra H-cycle and per extra L-cycle**. Cycle count is a
 CLI parameter, and it runs SMALL and LARGE across e.g. `1h1l` and `8h4l`.
 
+`--planning-cycles HxL` measures MPPI at a **reduced recursion depth** vs the
+full training depth and reports the planning speedup (drives `cfg.planning_H_cycles
+/ planning_L_cycles`, see optimization levers below).
+
 ```bash
 python profile_components.py                                   # SMALL+LARGE, 1h1l & 8h4l
 python profile_components.py --config small --cycles 1h1l,4h3l,8h4l --warmup 20 --iters 50
+python profile_components.py --config large --cycles 8h4l --planning-cycles 1h1l   # measure reduced-depth planning
 python profile_components.py --config large --cycles 8h4l --no-cuda-timer
 ```
 
 Timing hooks add ~µs/call and can be disabled via `--no-cuda-timer`.
+
+## Optimization levers added to the training code
+
+Prompted by the A100 profile (latency/overhead-bound, planning-dominated), these
+knobs were added to the real code (`config.py`, `tdmpc2.py`, `common/world_model.py`,
+`common/trm/simple_trm.py`):
+
+- **`compile_planning: bool = True`** — `torch.compile`s the planning path
+  (`sample_pi_trajs` / `mppi`) when single-GPU (`world_size==1`). Planning was
+  previously left uncompiled (a stale multi-GPU TODO); it's the dominant acting
+  cost and is launch-overhead bound, so compiling it is a direct win for the
+  packing scenario (each packed run is single-GPU). No effect when `compile=False`.
+- **`planning_H_cycles` / `planning_L_cycles`** (default `None` = training depth) —
+  run the SimpleTRM dynamics at a *shallower* recursion depth during MPPI rollouts
+  than during the training update. MPPI rolls the recursive core `iterations×horizon`
+  times per action, so this is the largest acting-time lever: measured **~7.4×**
+  faster planning going `8h4l → 1h1l` (113 ms → 15 ms/action). This is the
+  compute-adaptivity idea applied at inference.
+- **Production note — `log_trm_gradnorms`**: defaults to `True` in `config.py`, but
+  per its own comment it *disables `torch.compile` on the recursive inner apply* and
+  adds per-step Python hooks/metrics. Set it **`False`** for real training runs; it's
+  a diagnostic aid, not needed in production. (The benchmarks already run with it off.)
 
 ## Findings that shaped the design (validated on the dev box)
 
