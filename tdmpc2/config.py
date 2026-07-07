@@ -93,7 +93,7 @@ class Config:
 	task_dim: int = 512										# task embedding dim, 512 assumes CLIP embeddings
 	num_q: int = 5											# number of Q-functions in ensemble, overridden by model_size
 	simnorm_dim: int = 8									# number of dims per simplex in simplicial embedding layer
-	wm_regularization_type: str = "simnorm"					# latent regularization: "simnorm" (simplicial embedding activation on latent outputs) or "sigreg" (Sketched Isotropic Gaussian Regularization loss; disables SimNorm on encoder/dynamics outputs)
+	wm_regularization_type: Optional[str] = "simnorm"		# latent regularization: "simnorm" (simplicial embedding activation on latent outputs), "sigreg" (Sketched Isotropic Gaussian Regularization loss; disables SimNorm on encoder/dynamics outputs), or None/"none" (disable both — latent left fully unconstrained)
 	sigreg_knots: int = 17									# number of quadrature knots for the SIGReg Epps-Pulley statistic
 	sigreg_num_proj: int = 1024								# number of random 1D projections per SIGReg evaluation
 	use_film_dynamics: bool = False							# whether to use FiLM conditioning for the task embedding in the dynamics model
@@ -102,13 +102,18 @@ class Config:
 	simple_trm_skip_type: str = "swiglu"						# skip connection type for SimpleTRM: one of ["additive", "mlp", "swiglu"]
 	rrm_mask_x_for_y_update: bool = True					# zero-mask x (WM latent) during y carry updates; with FiLM only the WM latent is masked, task/action still condition via FiLM
 
+	# Deep Improvement Supervision (DIS) — Asadulaev et al. "Deep Improvement Supervision"
+	use_dis_loss: bool = False								# add auxiliary per-H-cycle supervision of recursive dynamics (SimpleTRM/SRM) toward interpolated intermediate targets; off = exact existing behavior
+	dis_schedule: str = "linear"							# interpolation coefficient schedule over H_cycles for the intermediate targets, one of ["linear", "cosine"]; beta increases 0->1 with beta_final=1.0
+	dis_loss_coef: float = 1.0								# coefficient for the DIS auxiliary loss (only used when use_dis_loss=True)
+
 	# logging
 	log_trm_gradnorms: bool = True							# log per-step gradient norms through SimpleTRM recursion (disables torch.compile on inner apply fns)
 	wandb_project: str = "TRM Dynamics"							# wandb project name
 	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
 	wandb_group: Optional[str] = None								# wandb group name override (defaults to a combination of config options, seen in tdmpc2/common/logger.py)
-	wandb_run_name: Optional[str] = "dmc_strm_16ld_4h3l_simnorm"				# wandb run name (defaults to <seed>)
-	enable_wandb: bool = False								# whether to enable wandb logging
+	wandb_run_name: Optional[str] = "dmc_strmd_384ld_4h3l_film_mx_sigreg_0p1_dis"				# wandb run name (defaults to <seed>)
+	enable_wandb: bool = True								# whether to enable wandb logging
 
 	# misc
 	multiproc: bool = True									# whether to use multiple GPUs (will use all visible GPUs)
@@ -225,8 +230,13 @@ def parse_cfg(cfg):
 				if k not in cli_overrides:
 					cfg[k] = v
 
-	assert cfg.wm_regularization_type in ("simnorm", "sigreg"), \
-		f'Invalid wm_regularization_type {cfg.wm_regularization_type}. Must be "simnorm" or "sigreg".'
+	# Normalize the "disable both" sentinel: Python None (e.g. `wm_regularization_type=null`
+	# from the CLI) is treated identically to the string "none", so all downstream checks
+	# only ever compare against the string.
+	if cfg.wm_regularization_type is None:
+		cfg.wm_regularization_type = "none"
+	assert cfg.wm_regularization_type in ("simnorm", "sigreg", "none"), \
+		f'Invalid wm_regularization_type {cfg.wm_regularization_type}. Must be "simnorm", "sigreg", or None/"none".'
 
 	# Set defaults
 	cfg.tasks = TASK_SET.get(cfg.task, [cfg.task] * cfg.num_envs)

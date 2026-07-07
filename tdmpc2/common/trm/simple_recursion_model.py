@@ -1,9 +1,10 @@
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from dataclasses import dataclass
 
 from common.layers import mlp, SimNorm, NormedLinear, FiLM, latent_act
 from common.trm.trm_layers import trunc_normal_init_, SwiGLU
+from common.trm.dis_utils import advantage_margin, dis_beta, advantage_margin_curve_from_pending
 
 import torch
 from torch import nn
@@ -37,6 +38,8 @@ class SRM(nn.Module):
         self.H_cycles = config.H_cycles
         self.L_cycles = config.L_cycles
         self.log_gradnorms = config.log_trm_gradnorms
+        self.use_dis_loss = config.use_dis_loss
+        self.dis_schedule = config.dis_schedule
         self.use_film = config.use_film_dynamics
 
         self.truncation_length = config.srm_truncation_length
@@ -105,39 +108,84 @@ class SRM(nn.Module):
     def _compute_context(self, z: torch.Tensor) -> torch.Tensor:
         return self.context_net(z)
 
-    def forward(self, carry: SRMCarry) -> torch.Tensor:
+    def forward(self, carry: SRMCarry, z_star: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        z_star: stop-grad encoded next-state (the consistency-loss target), passed only
+        during training. When None (inference, or all diagnostics/DIS off), no margin
+        logging and no DIS loss is computed -- pure prediction. Returns (z, dis_loss),
+        where dis_loss is a scalar (zero when DIS is off / z_star is None) carried back
+        through the dataflow so it stays cudagraph-safe.
+        """
         step_norms: Dict[str, torch.Tensor] = {}
         if self.log_gradnorms and self.training:
             self._pending_grad_norms.append(step_norms)
 
+        # Diagnostics / DIS are train-time only and need z_star (never available at inference).
+        log_margin = self.log_gradnorms and self.training and z_star is not None
+        compute_dis = self.use_dis_loss and z_star is not None
+        dis_loss = carry.z.new_zeros(())
+
         for h in range(self.H_cycles):
+            # High recursion cycle: capture the carry before the context is refreshed so we
+            # can log how far the high carry (z) moves and anchor the DIS intermediate target.
+            z_before = carry.z
             carry.context = self._compute_context(carry.z)
 
             # First (L_cycles - T) iterations without gradients
             with torch.no_grad():
                 for l in range(self.nograd_cycles):
-                    z_before = carry.z
+                    z_inner_before = carry.z
                     carry = self._apply_fun(carry)
-                    if self.log_gradnorms and self.training:
-                        name = f"y_h{h}_l{l}"
-                        step_norms[f"{name}_delta"] = (carry.z - z_before).norm()
-                        step_norms[f"{name}_cossim"] = F.cosine_similarity(carry.z, z_before, dim=-1).mean()
+                    # Part 1: Advantage Margin at every inner iteration, including no-grad
+                    # ones (advantage_margin detaches internally so this stays side-effect free).
+                    if log_margin:
+                        m_mean, m_frac = advantage_margin(z_inner_before, carry.z, z_star)
+                        step_norms[f"h{h}_l{l}_advantage_margin_mean"] = m_mean
+                        step_norms[f"h{h}_l{l}_advantage_margin_frac_nonpositive"] = m_frac
 
             # Last T iterations with gradients (truncated BPTT)
             for l in range(self.grad_cycles):
-                z_before = carry.z
+                z_inner_before = carry.z
                 carry = self._apply_fun(carry)
+                if log_margin:
+                    gl = self.nograd_cycles + l
+                    m_mean, m_frac = advantage_margin(z_inner_before, carry.z, z_star)
+                    step_norms[f"h{h}_l{gl}_advantage_margin_mean"] = m_mean
+                    step_norms[f"h{h}_l{gl}_advantage_margin_frac_nonpositive"] = m_frac
 
-                if self.log_gradnorms and self.training:
-                    name = f"y_h{h}_l{self.nograd_cycles + l}"
-                    if carry.z.requires_grad:
-                        carry.z.register_hook(
-                            lambda g, name=name: step_norms.__setitem__(name, g.detach().norm())
-                        )
-                    step_norms[f"{name}_delta"] = (carry.z.detach() - z_before.detach()).norm()
-                    step_norms[f"{name}_cossim"] = F.cosine_similarity(carry.z.detach(), z_before.detach(), dim=-1).mean()
+            # Part 2: DIS auxiliary loss on this high cycle's output, for s = h+1 in
+            # 1..H_cycles-1. The final cycle (s = H_cycles, beta = 1.0) would target z_star
+            # exactly, which the existing consistency loss already covers -> skipped here to
+            # avoid double-counting. Gradient through carry.z respects the existing nograd/grad
+            # cycle split; the only NEW detach is z_before (the moving-target anchor).
+            if compute_dis and h < self.H_cycles - 1:
+                s = h + 1
+                beta = dis_beta(s, self.H_cycles, self.dis_schedule)
+                z_dagger = (1.0 - beta) * z_before.detach() + beta * z_star
+                dis_term = F.mse_loss(carry.z, z_dagger)
+                dis_loss = dis_loss + dis_term
+                if log_margin:
+                    step_norms[f"y_{h}_dis_loss"] = dis_term.detach()
 
-        return carry.z
+            # Log the high-carry delta/cossim once per high recursion cycle, using the
+            # same metric names as SimpleTRM (y is its high carry; z is ours).
+            if self.log_gradnorms and self.training:
+                if h == self.H_cycles - 1 and carry.z.requires_grad:
+                    carry.z.register_hook(lambda g: step_norms.__setitem__("y", g.detach().norm()))
+                step_norms[f"y_{h}_delta"] = (carry.z.detach() - z_before.detach()).norm()
+                step_norms[f"y_{h}_cossim"] = F.cosine_similarity(carry.z.detach(), z_before.detach(), dim=-1).mean()
+
+        return carry.z, dis_loss
+
+    def get_advantage_margin_curve(self) -> Dict[int, float]:
+        """
+        Mean Advantage Margin vs. global recursion-cycle index (h * L_cycles + l),
+        aggregated from the pending gradnorm scaffold. Positive entries are cycles doing
+        genuine refinement toward z*; entries near/below zero are dead compute. See
+        Asadulaev et al. "Deep Improvement Supervision" for the underlying condition.
+        """
+        pending = getattr(self, "_pending_grad_norms", [])
+        return advantage_margin_curve_from_pending(pending, self.config.L_cycles)
 
     def drain_grad_norms(self) -> List[Dict[str, torch.Tensor]]:
         result = self._pending_grad_norms

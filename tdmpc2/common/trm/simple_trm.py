@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from common.layers import mlp, SimNorm, NormedLinear, FiLM, latent_act
 from common.trm.trm_layers import trunc_normal_init_, SwiGLU
+from common.trm.dis_utils import advantage_margin, dis_beta, advantage_margin_curve_from_pending
 
 import torch
 from torch import nn
@@ -74,8 +75,14 @@ class SimpleTRM(nn.Module):
         if self.skip_type == "mlp":
             self.skip_mlp = mlp(config.latent_dim, [], config.latent_dim, act=nn.Mish())
         elif self.skip_type == "swiglu":
-            self.skip_mlp = SwiGLU(hidden_size=config.latent_dim, expansion=self.config.expansion)
+            # zero_init_out=True: start the swiglu skip as an exact identity (out + 0).
+            # Without it, SwiGLU's quadratic silu(gate)*up term makes the z/y carry
+            # overflow to inf->NaN across recursion cycles at fresh init (worse at higher
+            # L_cycles). See SwiGLU.__init__ and common/trm/trm_layers.py.
+            self.skip_mlp = SwiGLU(hidden_size=config.latent_dim, expansion=self.config.expansion, zero_init_out=True)
         self.log_trm_gradnorms = config.log_trm_gradnorms
+        self.use_dis_loss = config.use_dis_loss
+        self.dis_schedule = config.dis_schedule
         self._pending_grad_norms: List[Dict[str, torch.Tensor]] = []
 
         # Persistent bound-method reference so dynamo sees a stable callable identity
@@ -115,10 +122,22 @@ class SimpleTRM(nn.Module):
 
     # Not compiled: forward is absorbed into the outer loss_fn compile (reduce-overhead).
     # Compiling _apply_* independently would create graph breaks in that outer trace.
-    def forward(self, carry: SimpleTRMCarry):
+    def forward(self, carry: SimpleTRMCarry, z_star: torch.Tensor = None):
+        """
+        z_star: stop-grad encoded next-state (the consistency-loss target), passed only
+        during training. When None (inference, or all diagnostics/DIS off), no margin
+        logging and no DIS loss is computed -- pure prediction. Returns (y, dis_loss),
+        where dis_loss is a scalar (zero when DIS is off / z_star is None) carried back
+        through the dataflow so it stays cudagraph-safe.
+        """
         step_norms: Dict[str, torch.Tensor] = {}
         if self.log_trm_gradnorms and self.training:
             self._pending_grad_norms.append(step_norms)
+
+        # Diagnostics / DIS are train-time only and need z_star (never available at inference).
+        log_margin = self.log_trm_gradnorms and self.training and z_star is not None
+        compute_dis = self.use_dis_loss and z_star is not None
+        dis_loss = carry.y.new_zeros(())
 
         # H_cycles-1 warmup passes: detach outputs instead of using torch.no_grad(), so
         # grad_mode stays constant for _apply_fn across all call sites (no_grad would cause
@@ -126,15 +145,41 @@ class SimpleTRM(nn.Module):
         # Passing z_before.detach() to _skip normalises before.requires_grad=False so that
         # guard never varies — the requires_grad_(True) workarounds are no longer needed.
         for h in range(self.config.H_cycles - 1):
-            for _ in range(self.config.L_cycles):
+            for i in range(self.config.L_cycles):
                 z_before = carry.z
                 carry.z = self._apply_fn(carry).detach()
                 if self.use_skip:
                     carry.z = self._skip(carry.z, z_before.detach())
+                # Part 1: Advantage Margin on the low carry at every inner iteration.
+                if log_margin:
+                    m_mean, m_frac = advantage_margin(z_before, carry.z, z_star)
+                    step_norms[f"h{h}_l{i}_advantage_margin_mean"] = m_mean
+                    step_norms[f"h{h}_l{i}_advantage_margin_frac_nonpositive"] = m_frac
+
             y_before = carry.y
-            carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y).detach()
-            if self.use_skip:
-                carry.y = self._skip(carry.y, y_before.detach())
+            if compute_dis:
+                # Capture this cycle's high-carry output WITH grad before detaching it into
+                # the carry: this gives a 1-step (deep-supervision) gradient through the
+                # single cycle while leaving the truncated-BPTT carry detach untouched.
+                y_pre = self._apply_fn(carry, mask_x=self.mask_x_for_y)
+                if self.use_skip:
+                    y_pre = self._skip(y_pre, y_before.detach())
+                carry.y = y_pre.detach()
+                # DIS intermediate target for high cycle s = h+1 (in 1..H_cycles-1, so the
+                # final cycle is never covered here -> no double count with consistency).
+                s = h + 1
+                beta = dis_beta(s, self.config.H_cycles, self.dis_schedule)
+                # NEW detach point: z_prev_cycle_output (the previous cycle's output) only
+                # defines a moving target and must not be backpropagated through.
+                z_dagger = (1.0 - beta) * y_before.detach() + beta * z_star
+                dis_term = F.mse_loss(y_pre, z_dagger)
+                dis_loss = dis_loss + dis_term
+                if log_margin:
+                    step_norms[f"y_{h}_dis_loss"] = dis_term.detach()
+            else:
+                carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y).detach()
+                if self.use_skip:
+                    carry.y = self._skip(carry.y, y_before.detach())
             if self.log_trm_gradnorms and self.training:
                 step_norms[f"y_{h}_delta"] = (carry.y.detach() - y_before.detach()).norm()
                 step_norms[f"y_{h}_cossim"] = F.cosine_similarity(carry.y.detach(), y_before.detach(), dim=-1).mean()
@@ -145,6 +190,10 @@ class SimpleTRM(nn.Module):
             carry.z = self._apply_fn(carry)
             if self.use_skip:
                 carry.z = self._skip(carry.z, z_before)
+            if log_margin:
+                m_mean, m_frac = advantage_margin(z_before, carry.z, z_star)
+                step_norms[f"h{self.config.H_cycles - 1}_l{i}_advantage_margin_mean"] = m_mean
+                step_norms[f"h{self.config.H_cycles - 1}_l{i}_advantage_margin_frac_nonpositive"] = m_frac
             if self.log_trm_gradnorms and self.training:
                 if carry.z.requires_grad:
                     carry.z.register_hook(lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()}))
@@ -154,6 +203,9 @@ class SimpleTRM(nn.Module):
         carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y)
         if self.use_skip:
             carry.y = self._skip(carry.y, y_before)
+        # Final cycle (s = H_cycles, beta = 1.0): its DIS target would be exactly z_star,
+        # which the existing consistency loss already supervises -> intentionally NO DIS
+        # term added here to avoid double-counting.
         if self.log_trm_gradnorms and self.training:
             h = self.config.H_cycles - 1
             if carry.y.requires_grad:
@@ -161,7 +213,16 @@ class SimpleTRM(nn.Module):
             step_norms[f"y_{h}_delta"] = (carry.y.detach() - y_before.detach()).norm()
             step_norms[f"y_{h}_cossim"] = F.cosine_similarity(carry.y.detach(), y_before.detach(), dim=-1).mean()
 
-        return carry.y
+        return carry.y, dis_loss
+
+    def get_advantage_margin_curve(self) -> Dict[int, float]:
+        """
+        Mean Advantage Margin vs. global recursion-cycle index (h * L_cycles + l),
+        aggregated from the pending gradnorm scaffold. Positive entries are cycles doing
+        genuine refinement toward z*; entries near/below zero are dead compute. See
+        Asadulaev et al. "Deep Improvement Supervision" for the underlying condition.
+        """
+        return advantage_margin_curve_from_pending(self._pending_grad_norms, self.config.L_cycles)
 
     def drain_grad_norms(self) -> List[Dict[str, torch.Tensor]]:
         result = self._pending_grad_norms

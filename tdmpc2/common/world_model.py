@@ -198,17 +198,23 @@ class WorldModel(nn.Module):
 				out = out[1]
 			return out
 
-	def next(self, z, a, task):
+	def next(self, z, a, task, z_star=None):
 		"""
 		Predicts the next latent state given the current latent state and action.
+
+		z_star (optional): the stop-grad encoded next-state (consistency-loss target),
+		supplied only by the training loss for the SimpleTRM/SRM recursive dynamics so
+		they can compute the train-time advantage-margin diagnostic and the optional DIS
+		auxiliary loss. When z_star is passed (recursive dynamics only) this returns
+		(next_z, dis_loss); otherwise it returns next_z alone, as all inference paths expect.
 		"""
 		if self.cfg.use_trm_dynamics == "trm":
 			obs = torch.cat([z, a], dim=-1)
 			_obs_flat = obs.view(-1, obs.shape[-1])
-			_task_flat = self.reshape_task_ids(task, obs.shape[:-1]) 
-			
+			_task_flat = self.reshape_task_ids(task, obs.shape[:-1])
+
 			x = TRMBatch(inputs=_obs_flat, task_embedding=_task_flat)
-			
+
 			init_carry=self._dynamics.initial_carry(x)
 			out = self._dynamics(init_carry, x)[1]['logits']
 			return out.view(*obs.shape[:-1], -1)
@@ -219,8 +225,12 @@ class WorldModel(nn.Module):
 			# Flatten to match input shapes for calls with different batch shapes (for planning with an added horizon dim)
 			x_flat = x.reshape(-1, x.shape[-1]).contiguous().clone() # .contiguous().clone() avoids Pytorch guard warnings
 			init_carry = self._dynamics.initial_carry(x_flat)
-			out = self._dynamics(init_carry)
-			return out.view(*batch_shape, -1)
+			z_star_flat = z_star.reshape(-1, z_star.shape[-1]) if z_star is not None else None
+			out, dis_loss = self._dynamics(init_carry, z_star=z_star_flat)
+			out = out.view(*batch_shape, -1)
+			if z_star is not None:
+				return out, dis_loss
+			return out
 		else:
 			z = self.task_emb(z, task)
 			z = torch.cat([z, a], dim=-1)

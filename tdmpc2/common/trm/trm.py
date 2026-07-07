@@ -171,10 +171,10 @@ class TRMInner(nn.Module):
         self.lm_head      = CastedLinear(self.config.hidden_size, self.config.latent_dim, bias=False)
         with torch.no_grad():
             trunc_normal_init_(self.lm_head.weight, std=0.02)  # Match Newt's default nn.Linear init
-        self.lm_head_norm = latent_act(self.config)  # SimNorm (or identity under SIGReg) to match baseline encoder output distribution
-        # SIGReg is incompatible with SimNorm: when selected, also drop the hidden-state SimNorm
-        # so the encoder/dynamics are fully SimNorm-free and the latent can be Gaussian-regularized.
-        if self.config.use_trm_hidden_state_simnorm and self.config.wm_regularization_type != "sigreg":
+        self.lm_head_norm = latent_act(self.config)  # SimNorm only under "simnorm", else identity (SIGReg / none)
+        # SimNorm is only applied under "simnorm" regularization: under "sigreg" (or None/"none")
+        # also drop the hidden-state SimNorm so the encoder/dynamics are fully SimNorm-free.
+        if self.config.use_trm_hidden_state_simnorm and self.config.wm_regularization_type == "simnorm":
             self.embed_norm = SimNorm(self.config)  # SimNorm on input to help match the output distribution
             self._apply_embed_norm = self._apply_embed_norm_simnorm
         else:

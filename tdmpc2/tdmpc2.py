@@ -368,6 +368,15 @@ class TDMPC2(torch.nn.Module):
 		log_wm_delta = (self.cfg.log_trm_gradnorms and self.cfg.use_trm_dynamics is None
 						and not self.cfg.use_film_dynamics)
 
+		# Pass z* (= the stop-grad consistency target _next_z) into the SimpleTRM/SRM
+		# dynamics when either the advantage-margin diagnostic or the DIS auxiliary loss is
+		# enabled. The DIS loss is returned via dataflow (not a side-effect list) so it stays
+		# cudagraph-safe. add_dis additionally requires recursive dynamics (DIS is undefined
+		# for the plain MLP/TRM paths), guaranteeing dis_loss is a tensor when we use it.
+		add_dis = self.cfg.use_dis_loss and self.cfg.use_trm_dynamics in ("simple", "srm")
+		pass_z_star = self.cfg.use_trm_dynamics in ("simple", "srm") and \
+			(self.cfg.log_trm_gradnorms or self.cfg.use_dis_loss)
+
 		# Latent rollout
 		zs = torch.empty(self.cfg.horizon+1, self.cfg.batch_size, self.cfg.latent_dim, device=self.device)
 		z = self.model.encode(obs[0], task[0])
@@ -375,9 +384,14 @@ class TDMPC2(torch.nn.Module):
 		consistency_loss = 0
 		wm_z_delta = 0
 		wm_z_cossim = 0
+		dis_loss = 0
 		for t, (_action, _next_z, _task) in enumerate(zip(action.unbind(0), next_z.unbind(0), task.unbind(0))):
 			z_prev = z
-			z = self.model.next(z, _action, _task)
+			if pass_z_star:
+				z, dis_term = self.model.next(z, _action, _task, z_star=_next_z)
+				dis_loss = dis_loss + dis_term * self.rho[t]
+			else:
+				z = self.model.next(z, _action, _task)
 			consistency_loss = consistency_loss + F.mse_loss(z, _next_z) * self.rho[t]
 			if log_wm_delta:
 				wm_z_delta = wm_z_delta + (z.detach() - z_prev.detach()).norm()
@@ -432,6 +446,13 @@ class TDMPC2(torch.nn.Module):
 			self.cfg.sigreg_coef * sigreg_loss
 		)
 
+		# DIS auxiliary loss: per-H-cycle supervision toward interpolated intermediate
+		# targets, additive alongside (not replacing) the consistency loss. The final cycle
+		# is excluded inside the dynamics model so this never double-counts the consistency
+		# term on z*. No-op (dis_loss stays an int 0) when use_dis_loss is off.
+		if add_dis:
+			total_loss = total_loss + self.cfg.dis_loss_coef * dis_loss
+
 		info = {
 			"consistency_loss": consistency_loss,
 			"reward_loss": reward_loss,
@@ -439,6 +460,8 @@ class TDMPC2(torch.nn.Module):
 			"sigreg_loss": sigreg_loss,
 			"total_loss": total_loss,
 		}
+		if add_dis:
+			info["dis_loss"] = dis_loss
 		info.update(pi_info)
 		if log_wm_delta:
 			info["wm_z_delta"] = wm_z_delta / self.cfg.horizon

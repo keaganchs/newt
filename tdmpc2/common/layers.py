@@ -28,15 +28,17 @@ class SimNorm(nn.Module):
 def latent_act(cfg):
 	"""Activation applied to encoder/dynamics latent outputs.
 
-	With "simnorm" regularization the latent is projected onto simplices (the default,
-	which implicitly prevents representation collapse). With "sigreg" the latent is left
-	unconstrained (identity) so that the SIGReg loss can regularize its distribution
-	toward an isotropic Gaussian instead — the two mechanisms are mutually exclusive.
-	The surrounding NormedLinear's LayerNorm is retained in both cases.
+	With "simnorm" regularization the latent is projected onto simplices (which implicitly
+	prevents representation collapse). With "sigreg" the latent is left unconstrained
+	(identity) so that the SIGReg loss can regularize its distribution toward an isotropic
+	Gaussian instead. With None/"none" the latent is likewise left unconstrained (identity)
+	but with no regularizer at all — SimNorm and SIGReg are mutually exclusive, and only
+	"simnorm" applies the activation. The surrounding NormedLinear's LayerNorm is retained
+	in all cases.
 	"""
-	if cfg.wm_regularization_type == "sigreg":
-		return nn.Identity()
-	return SimNorm(cfg)
+	if cfg.wm_regularization_type == "simnorm":
+		return SimNorm(cfg)
+	return nn.Identity()
 
 
 class NormedLinear(nn.Linear):

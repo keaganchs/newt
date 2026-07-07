@@ -148,14 +148,25 @@ class RotaryEmbedding(nn.Module):
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, hidden_size: int, expansion: float):
+    def __init__(self, hidden_size: int, expansion: float, zero_init_out: bool = False):
         super().__init__()
-        # Dropped the 256 multiple from the original implementation 
+        # Dropped the 256 multiple from the original implementation
         # to accommodate shorter sequence lengths
         inter = _find_multiple(round(expansion * hidden_size * 2 / 3), 16)
 
         self.gate_up_proj = CastedLinear(hidden_size, inter * 2, bias=False)
         self.down_proj    = CastedLinear(inter, hidden_size, bias=False)
+
+        # Residual-friendly init: zero the output projection so the block starts as
+        # a no-op (output 0). Used when this SwiGLU is a residual/skip branch, so the
+        # residual begins as an exact identity (out + 0) and learns its magnitude,
+        # instead of contributing a full-magnitude *quadratic* term at init. SwiGLU's
+        # silu(gate)*up is quadratic in its input, so an unzeroed skip branch makes a
+        # recursively-applied carry blow up super-exponentially at fresh init.
+        # (CastedLinear is not an nn.Linear, so common.init.weight_init never touches
+        # it; this zero-init therefore survives WorldModel's apply(weight_init).)
+        if zero_init_out:
+            nn.init.zeros_(self.down_proj.weight)
 
     @torch.compile(fullgraph=True)
     def forward(self, x):
