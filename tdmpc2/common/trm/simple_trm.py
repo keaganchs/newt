@@ -122,14 +122,23 @@ class SimpleTRM(nn.Module):
 
     # Not compiled: forward is absorbed into the outer loss_fn compile (reduce-overhead).
     # Compiling _apply_* independently would create graph breaks in that outer trace.
-    def forward(self, carry: SimpleTRMCarry, z_star: torch.Tensor = None):
+    def forward(self, carry: SimpleTRMCarry, z_star: torch.Tensor = None,
+                H_cycles: int = None, L_cycles: int = None):
         """
         z_star: stop-grad encoded next-state (the consistency-loss target), passed only
         during training. When None (inference, or all diagnostics/DIS off), no margin
         logging and no DIS loss is computed -- pure prediction. Returns (y, dis_loss),
         where dis_loss is a scalar (zero when DIS is off / z_star is None) carried back
         through the dataflow so it stays cudagraph-safe.
+
+        H_cycles / L_cycles: optional per-call recursion-depth override (used to run
+        cheaper, shallower rollouts during planning/MPPI than during the training
+        update; None = the configured depth). These are Python ints, so torch.compile
+        specialises on them -- a distinct planning depth yields its own compiled graph.
         """
+        H = self.config.H_cycles if H_cycles is None else H_cycles
+        L = self.config.L_cycles if L_cycles is None else L_cycles
+
         step_norms: Dict[str, torch.Tensor] = {}
         if self.log_trm_gradnorms and self.training:
             self._pending_grad_norms.append(step_norms)
@@ -144,8 +153,8 @@ class SimpleTRM(nn.Module):
         # dynamo to compile _apply_fn separately for each grad_mode state it encounters).
         # Passing z_before.detach() to _skip normalises before.requires_grad=False so that
         # guard never varies — the requires_grad_(True) workarounds are no longer needed.
-        for h in range(self.config.H_cycles - 1):
-            for i in range(self.config.L_cycles):
+        for h in range(H - 1):
+            for i in range(L):
                 z_before = carry.z
                 carry.z = self._apply_fn(carry).detach()
                 if self.use_skip:
@@ -168,7 +177,7 @@ class SimpleTRM(nn.Module):
                 # DIS intermediate target for high cycle s = h+1 (in 1..H_cycles-1, so the
                 # final cycle is never covered here -> no double count with consistency).
                 s = h + 1
-                beta = dis_beta(s, self.config.H_cycles, self.dis_schedule)
+                beta = dis_beta(s, H, self.dis_schedule)
                 # NEW detach point: z_prev_cycle_output (the previous cycle's output) only
                 # defines a moving target and must not be backpropagated through.
                 z_dagger = (1.0 - beta) * y_before.detach() + beta * z_star
@@ -185,15 +194,15 @@ class SimpleTRM(nn.Module):
                 step_norms[f"y_{h}_cossim"] = F.cosine_similarity(carry.y.detach(), y_before.detach(), dim=-1).mean()
 
         # Final cycle with grad
-        for i in range(self.config.L_cycles):
+        for i in range(L):
             z_before = carry.z
             carry.z = self._apply_fn(carry)
             if self.use_skip:
                 carry.z = self._skip(carry.z, z_before)
             if log_margin:
                 m_mean, m_frac = advantage_margin(z_before, carry.z, z_star)
-                step_norms[f"h{self.config.H_cycles - 1}_l{i}_advantage_margin_mean"] = m_mean
-                step_norms[f"h{self.config.H_cycles - 1}_l{i}_advantage_margin_frac_nonpositive"] = m_frac
+                step_norms[f"h{H - 1}_l{i}_advantage_margin_mean"] = m_mean
+                step_norms[f"h{H - 1}_l{i}_advantage_margin_frac_nonpositive"] = m_frac
             if self.log_trm_gradnorms and self.training:
                 if carry.z.requires_grad:
                     carry.z.register_hook(lambda g, _i=i: step_norms.update({f"z_{_i}": g.detach().norm()}))
@@ -207,7 +216,7 @@ class SimpleTRM(nn.Module):
         # which the existing consistency loss already supervises -> intentionally NO DIS
         # term added here to avoid double-counting.
         if self.log_trm_gradnorms and self.training:
-            h = self.config.H_cycles - 1
+            h = H - 1
             if carry.y.requires_grad:
                 carry.y.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
             step_norms[f"y_{h}_delta"] = (carry.y.detach() - y_before.detach()).norm()

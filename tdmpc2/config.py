@@ -69,6 +69,8 @@ class Config:
 	constrained_planning: bool = True						# whether to constrain planning after pretraining
 	constraint_start_step: int = 2_000_000					# you probably want this to be seeding_coef * num_envs * episode_length
 	constraint_final_step: int = 10_000_000					# linearly anneal constraint weight until this step
+	planning_H_cycles: Optional[int] = None					# SimpleTRM dynamics H_cycles used during planning/MPPI rollouts (None = same as training H_cycles). Fewer cycles trade dynamics fidelity for much cheaper planning: MPPI rolls the recursive core iterations*horizon times per action, so this is the largest acting-time lever.
+	planning_L_cycles: Optional[int] = None					# SimpleTRM dynamics L_cycles used during planning/MPPI rollouts (None = same as training L_cycles)
 
 	# actor
 	log_std_min: float = -10								# min log stddev for actor
@@ -118,6 +120,7 @@ class Config:
 	# misc
 	multiproc: bool = True									# whether to use multiple GPUs (will use all visible GPUs)
 	compile: bool = True									# whether to use torch.compile for model compilation (faster)
+	compile_planning: bool = True							# also torch.compile the planning path (sample_pi_trajs / mppi) when single-GPU (world_size==1); the multiproc issue the original TODO referred to only affects world_size>1. No effect if compile=False.
 	render_size: int = 224									# render size for rgb observations
 	save_video: bool = False								# whether to save evaluation videos
 	save_agent: bool = True									# whether to save agent checkpoints

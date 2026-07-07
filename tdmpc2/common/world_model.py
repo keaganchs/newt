@@ -198,7 +198,7 @@ class WorldModel(nn.Module):
 				out = out[1]
 			return out
 
-	def next(self, z, a, task, z_star=None):
+	def next(self, z, a, task, z_star=None, H_cycles=None, L_cycles=None):
 		"""
 		Predicts the next latent state given the current latent state and action.
 
@@ -207,6 +207,11 @@ class WorldModel(nn.Module):
 		they can compute the train-time advantage-margin diagnostic and the optional DIS
 		auxiliary loss. When z_star is passed (recursive dynamics only) this returns
 		(next_z, dis_loss); otherwise it returns next_z alone, as all inference paths expect.
+
+		H_cycles / L_cycles (optional): per-call SimpleTRM recursion-depth override,
+		passed by the planner to roll cheaper/shallower dynamics during MPPI than the
+		training update uses (None = the configured training depth). Only honoured by the
+		"simple" dynamics; ignored by the TRM / SRM / plain-MLP paths.
 		"""
 		if self.cfg.use_trm_dynamics == "trm":
 			obs = torch.cat([z, a], dim=-1)
@@ -226,7 +231,13 @@ class WorldModel(nn.Module):
 			x_flat = x.reshape(-1, x.shape[-1]).contiguous().clone() # .contiguous().clone() avoids Pytorch guard warnings
 			init_carry = self._dynamics.initial_carry(x_flat)
 			z_star_flat = z_star.reshape(-1, z_star.shape[-1]) if z_star is not None else None
-			out, dis_loss = self._dynamics(init_carry, z_star=z_star_flat)
+			# Planning-depth override only applies to the SimpleTRM dynamics; SRM keeps its
+			# configured depth (its truncated-BPTT split is tied to L_cycles).
+			if self.cfg.use_trm_dynamics == "simple":
+				out, dis_loss = self._dynamics(init_carry, z_star=z_star_flat,
+											   H_cycles=H_cycles, L_cycles=L_cycles)
+			else:
+				out, dis_loss = self._dynamics(init_carry, z_star=z_star_flat)
 			out = out.view(*batch_shape, -1)
 			if z_star is not None:
 				return out, dis_loss

@@ -60,11 +60,16 @@ class TDMPC2(torch.nn.Module):
 		if self.compile and self.cfg.rank == 0:
 			print('Compiling methods...')
 		self.pi = self._maybe_compile(self._pi)
-		# TODO: enable compilation when multiproc is fixed
-		# self.sample_pi_trajs = self._maybe_compile(self._sample_pi_trajs)
-		# self.mppi = self._maybe_compile(self._mppi)
-		self.sample_pi_trajs = self._sample_pi_trajs
-		self.mppi = self._mppi
+		# Planning is the dominant *acting* cost (MPPI rolls the recursive world model
+		# iterations*horizon times per action) and is otherwise launch-overhead bound.
+		# Compile it too when single-GPU: the "multiproc is fixed" TODO only concerns
+		# world_size>1 (DDP + cudagraphs on the planning path). Gated by cfg.compile_planning.
+		if self.cfg.world_size == 1 and getattr(self.cfg, 'compile_planning', True):
+			self.sample_pi_trajs = self._maybe_compile(self._sample_pi_trajs)
+			self.mppi = self._maybe_compile(self._mppi)
+		else:
+			self.sample_pi_trajs = self._sample_pi_trajs
+			self.mppi = self._mppi
 		self.pi_loss = self._maybe_compile(self._pi_loss)
 		self.loss_fn = self._maybe_compile(self._loss_fn)
 
@@ -166,7 +171,8 @@ class TDMPC2(torch.nn.Module):
 		discount = torch.ones(self.cfg.num_envs, self.cfg.num_samples, 1, dtype=torch.float32, device=z.device)
 		for t in range(self.cfg.horizon):
 			reward = math.two_hot_inv(self.model.reward(z, actions[:, t], task), self.cfg)
-			z = self.model.next(z, actions[:, t], task)
+			z = self.model.next(z, actions[:, t], task,
+				H_cycles=self.cfg.planning_H_cycles, L_cycles=self.cfg.planning_L_cycles)
 			G = G + discount * reward
 			discount_update = self.discount[task].view(-1, 1, 1)
 			discount = discount * discount_update
@@ -183,7 +189,8 @@ class TDMPC2(torch.nn.Module):
 		for t in range(self.cfg.horizon - 1):
 			a, _ = self.model.pi(_z, _task)
 			pi_actions[:, t] = a.view(self.cfg.num_envs, self.cfg.num_pi_trajs, self.cfg.action_dim)
-			_z = self.model.next(_z, a, _task)
+			_z = self.model.next(_z, a, _task,
+				H_cycles=self.cfg.planning_H_cycles, L_cycles=self.cfg.planning_L_cycles)
 		a, _ = self.model.pi(_z, _task)
 		pi_actions[:, -1] = a.view(self.cfg.num_envs, self.cfg.num_pi_trajs, self.cfg.action_dim)
 		return pi_actions, z
