@@ -70,8 +70,14 @@ def setup_mujoco_gl(force=None, verbose=True):
     return backend
 
 
-def _egl_probe_ok(timeout=30):
-    """True iff a MuJoCo EGL context can actually be created on this node.
+def _egl_probe_ok(timeout=60):
+    """True iff dm_control can actually initialise a headless EGL display here.
+
+    We must probe dm_control's OWN EGL renderer (PyOpenGL EGL), not mujoco's
+    GLContext: on some nodes (e.g. the 42 cluster A100s) mujoco.GLContext succeeds
+    yet dm_control raises 'Cannot initialize a headless EGL display' at env build.
+    So the probe loads a dm_control suite env with MUJOCO_GL=egl and forces a
+    render, which drives the exact code path the real envs use.
 
     Isolated in a subprocess so a hard GL failure can't take down the caller; we
     os._exit(0) after success to skip the (occasionally throwing) EGL teardown and
@@ -79,8 +85,9 @@ def _egl_probe_ok(timeout=30):
     code = (
         "import os, sys\n"
         "os.environ['MUJOCO_GL'] = 'egl'\n"
-        "import mujoco\n"
-        "c = mujoco.GLContext(64, 64); c.make_current()\n"
+        "from dm_control import suite\n"
+        "e = suite.load('cartpole', 'balance'); e.reset()\n"
+        "e.physics.render(64, 64, camera_id=0)\n"
         "print('EGL_OK'); sys.stdout.flush(); os._exit(0)\n"
     )
     try:
