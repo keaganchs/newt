@@ -246,7 +246,8 @@ def launch_level(config, h, l, num_envs, level, duration, warmup, compile_flag,
         gpu = gpu_indices[i % len(gpu_indices)] if gpu_indices else 0
         env = dict(os.environ)
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-        env.setdefault("MUJOCO_GL", "egl")
+        # MUJOCO_GL is already resolved (egl or disable) by newt_bench_common's
+        # setup_mujoco_gl() at import; workers inherit it here and don't re-probe.
         cmd = [sys.executable, os.path.abspath(__file__), "--worker",
                "--config", config, "--h", str(h), "--l", str(l),
                "--num-envs", str(num_envs), "--duration", str(duration),

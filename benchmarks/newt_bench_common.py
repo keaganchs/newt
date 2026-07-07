@@ -36,10 +36,64 @@ from typing import Optional, List, Dict, Any
 
 # train.py sets these before importing torch; mirror the important ones so the
 # subprocess/env behaviour matches a real run.
-os.environ.setdefault("MUJOCO_GL", "egl")
-if os.environ["MUJOCO_GL"] == "egl":
-    os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 os.environ.setdefault("LAZY_LEGACY_OP", "0")
+
+
+def setup_mujoco_gl(force=None, verbose=True):
+    """Select a working MuJoCo GL backend and export it via MUJOCO_GL.
+
+    dm_control/MuJoCo needs a GL backend to initialise even for state-only runs.
+    On headless nodes without EGL (e.g. the 42 cluster, whose own scripts export
+    MUJOCO_GL=disable) trying to use EGL crashes env construction. So:
+
+      1. If the caller/cluster already set MUJOCO_GL, respect it (no probe).
+      2. Otherwise attempt EGL in an isolated subprocess (a failed GL init can
+         segfault rather than raise, so we don't probe in-process); if the probe
+         fails, fall back to MUJOCO_GL=disable (state-only, headless).
+
+    Runs once at import; worker subprocesses inherit the resolved MUJOCO_GL through
+    os.environ, so they never re-probe. Override with force="egl"/"disable"/... ."""
+    pre_set = os.environ.get("MUJOCO_GL")
+    if force:
+        backend = force
+    elif pre_set:
+        backend = pre_set
+    else:
+        backend = "egl" if _egl_probe_ok() else "disable"
+        if verbose and backend == "disable":
+            print("[newt_bench] EGL probe failed -> MUJOCO_GL=disable (state-only headless).")
+    os.environ["MUJOCO_GL"] = backend
+    if backend == "egl":
+        os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+    else:
+        os.environ.pop("PYOPENGL_PLATFORM", None)
+    return backend
+
+
+def _egl_probe_ok(timeout=30):
+    """True iff a MuJoCo EGL context can actually be created on this node.
+
+    Isolated in a subprocess so a hard GL failure can't take down the caller; we
+    os._exit(0) after success to skip the (occasionally throwing) EGL teardown and
+    key off a stdout sentinel rather than the exit code."""
+    code = (
+        "import os, sys\n"
+        "os.environ['MUJOCO_GL'] = 'egl'\n"
+        "import mujoco\n"
+        "c = mujoco.GLContext(64, 64); c.make_current()\n"
+        "print('EGL_OK'); sys.stdout.flush(); os._exit(0)\n"
+    )
+    try:
+        r = subprocess.run([sys.executable, "-c", code],
+                           capture_output=True, text=True, timeout=timeout)
+        return "EGL_OK" in r.stdout
+    except Exception:
+        return False
+
+
+# Resolve the GL backend at import so every entry point (driver, worker, profiler)
+# and any later dm_control import sees a working MUJOCO_GL.
+setup_mujoco_gl()
 
 # Make `tdmpc2/` importable regardless of where the script is invoked from.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
