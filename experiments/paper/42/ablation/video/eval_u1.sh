@@ -12,7 +12,7 @@
 #
 #   group: abl_u1_video
 # ===========================================================================
-source "$(dirname "$(realpath "$0")")/_ablation_common.sh"
+source "$(dirname "$(realpath "$0")")/../_ablation_common.sh"
 
 GROUP="abl_u1_video"
 EVAL_EPISODES=3
@@ -33,12 +33,13 @@ for entry in "${CHECKPOINTS[@]}"; do
     IFS='|' read -r LABEL CKPT ARCH <<< "$entry"
     LABEL="$(echo "$LABEL" | xargs)"; CKPT="$(echo "$CKPT" | xargs)"; ARCH="$(echo "$ARCH" | xargs)"
     echo "[U1] video ${LABEL}"
+    RUN="u1_${LABEL}_video"                   # per-cell run + group (see _ablation_common.sh)
     python3 "${PYTHON_SCRIPT}" \
         task="dmcontrol" num_envs=21 obs="state" \
         use_trm_encoder=False use_task_embedding=True model_size="S" \
         enable_wandb=True wandb_project="TRM Dynamics" wandb_entity="trm-dynamics" \
-        wandb_group="${GROUP}" \
-        wandb_run_name="u1_${LABEL}_video" \
+        wandb_group="${GROUP}/${RUN}" \
+        wandb_run_name="${RUN}" \
         checkpoint="${CKPT}" \
         mpc=True steps=1 save_agent=False eval_episodes="${EVAL_EPISODES}" \
         save_video=True env_mode=sync \

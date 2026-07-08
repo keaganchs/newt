@@ -54,19 +54,47 @@ cd "${PROJECT_ROOT}"
 echo "[ablation] repo root: ${PROJECT_ROOT}"
 echo "[ablation] train.py : ${PYTHON_SCRIPT}"
 
+# ---- MPS (on by default) --------------------------------------------------
+# Each A100 script is launched in its OWN shell with a single GPU visible, then
+# packs several runs onto that GPU; MPS lets their kernels share the SMs. It is
+# enabled by default here. Disable per invocation with either:
+#     DISABLE_MPS=1 bash <script.sh>
+#     bash <script.sh> --disable-mps
+for _arg in "$@"; do [ "${_arg}" = "--disable-mps" ] && DISABLE_MPS=1; done
+if [ "${DISABLE_MPS:-0}" != "1" ]; then
+    _MPS_HELPER="${PROJECT_ROOT}/benchmarks/mps_control.sh"
+    if [ -f "${_MPS_HELPER}" ]; then
+        # shellcheck disable=SC1090
+        source "${_MPS_HELPER}" start || echo "[ablation] MPS start failed; continuing without it."
+    else
+        echo "[ablation] MPS helper not found at ${_MPS_HELPER}; continuing without MPS."
+    fi
+else
+    echo "[ablation] MPS disabled (--disable-mps / DISABLE_MPS=1)."
+fi
+
 # ---- seeds ----------------------------------------------------------------
 SEEDS=(0 1 2)
 
 # ---- launcher -------------------------------------------------------------
-# usage: launch <run_name> <wandb_group> [key=val ...]
-#   <run_name>    encodes axis + key hyperparameters; "_s<SEED>" is appended.
-#   <wandb_group> the unique group for this SET of runs (for pulling plot data).
+# usage: launch <run_name> <plan_tag> [key=val ...]
+#   <run_name>    encodes axis + key hyperparameters (the CELL). "_s<SEED>" is
+#                 appended for the wandb run name.
+#   <plan_tag>    the experiment/plan this cell belongs to (e.g. abl_f5_regularization).
 #   key=val ...   hydra overrides that move this cell off the anchor.
+#
+# WANDB GROUPING: the wandb group is set PER CELL to "<plan_tag>/<run_name>", so
+# the 3 seeds of a cell share a group (wandb's "group by group" then aggregates
+# them into one mean+/-band line) while every cell is a DISTINCT group. To pull a
+# whole plan for a plot, filter groups by the "<plan_tag>/" prefix. (Setting the
+# group to <plan_tag> alone -- as before -- collapsed every cell into one line.)
+#
 # Overrides are merged into the anchor BY KEY (so we never emit a duplicate
 # hydra key, which hydra rejects). One backgrounded run is launched per seed.
 launch() {
     local run_name="$1"; shift
-    local wandb_group="$1"; shift
+    local plan_tag="$1"; shift
+    local cell_group="${plan_tag}/${run_name}"
 
     # -- anchor (single source of truth) --
     declare -A C=(
@@ -106,10 +134,10 @@ launch() {
     for SEED in "${SEEDS[@]}"; do
         local args=()
         for k in "${!C[@]}"; do args+=("${k}=${C[$k]}"); done
-        echo "[ablation] launch ${run_name}_s${SEED}  (group=${wandb_group})"
+        echo "[ablation] launch ${run_name}_s${SEED}  (group=${cell_group})"
         python3 "${PYTHON_SCRIPT}" "${args[@]}" \
             seed="${SEED}" \
-            wandb_group="${wandb_group}" \
+            wandb_group="${cell_group}" \
             wandb_run_name="${run_name}_s${SEED}" &
     done
 }
@@ -120,10 +148,11 @@ launch() {
 # else through verbatim, one run per seed.
 launch_raw() {
     local run_name="$1"; shift
-    local wandb_group="$1"; shift
+    local plan_tag="$1"; shift
+    local cell_group="${plan_tag}/${run_name}"    # per-cell group; see launch() note
     local SEED
     for SEED in "${SEEDS[@]}"; do
-        echo "[ablation] launch_raw ${run_name}_s${SEED}  (group=${wandb_group})"
+        echo "[ablation] launch_raw ${run_name}_s${SEED}  (group=${cell_group})"
         python3 "${PYTHON_SCRIPT}" \
             task="dmcontrol" \
             num_envs=21 \
@@ -133,7 +162,7 @@ launch_raw() {
             enable_wandb=True \
             wandb_project="TRM Dynamics" \
             wandb_entity="trm-dynamics" \
-            wandb_group="${wandb_group}" \
+            wandb_group="${cell_group}" \
             wandb_run_name="${run_name}_s${SEED}" \
             seed="${SEED}" \
             "$@" &
