@@ -3,7 +3,7 @@
 #SBATCH --job-name=newt_trm
 #SBATCH --output=log/out_and_err_%j.txt
 #SBATCH --error=log/out_and_err_%j.txt
-#SBATCH --partition=amd2
+#SBATCH --partition=main
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=9
 #SBATCH --mem-per-cpu=5500

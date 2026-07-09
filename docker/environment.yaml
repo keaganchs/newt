@@ -58,4 +58,4 @@ dependencies:
     - labmaze==1.0.6
     - lxml==6.0.2
     # - mani-skill==3.0.0b22
-    - opencv-python==4.12.0.88
+    - opencv-python-headless==4.12.0.88  # headless build: no libGL.so.1 dependency (needed on GPU clusters without graphics caps)

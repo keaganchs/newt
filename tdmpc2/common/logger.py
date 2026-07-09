@@ -199,8 +199,13 @@ class Logger:
 			fp = self._model_dir / f'{str(identifier)}.pt'
 			agent.save(fp)
 			if self._wandb:
+				# wandb artifact names allow only [alphanumeric _ - .]; the group may
+				# contain '/' (per-cell grouping is "<plan_tag>/<run_name>"), so map any
+				# disallowed char to '_' to keep the name valid and unique.
+				raw_name = self._group + '-' + str(self._seed) + '-' + str(identifier)
+				artifact_name = re.sub(r'[^A-Za-z0-9_.-]', '_', raw_name)
 				artifact = self._wandb.Artifact(
-					self._group + '-' + str(self._seed) + '-' + str(identifier),
+					artifact_name,
 					type='model',
 				)
 				artifact.add_file(fp)
