@@ -249,7 +249,16 @@ class TRMInner(nn.Module):
             self.q_head.bias.fill_(-5)  # type: ignore
 
         # Log gradient norms through recursion steps to check for vanishing gradients.
+        self.log_trm_gradnorms = self.config.log_trm_gradnorms
         self._pending_grad_norms: List[Dict[str, torch.Tensor]] = []
+
+        # Gradnorm logging needs register_hook, which requires eager execution, so the
+        # logging variant runs under compiler.disable (the compiled _run_l_nograd /
+        # _L_level_step_grad / _H_level_* sub-fns still fire inside it). With logging
+        # off, forward stays traceable so outer compiled callers (loss_fn / planner)
+        # capture the whole TRM without graph breaks. Persistent bound-method reference
+        # so dynamo sees a stable callable identity (same pattern as SimpleTRM).
+        self._forward_fn = torch.compiler.disable(self._forward_impl) if self.log_trm_gradnorms else self._forward_impl
 
     def _scan(self, fn: Callable[[Any, torch.Tensor], Tuple[Any, Any]], init: Any, xs: torch.Tensor) -> Tuple[Any, Any]:
         return self._scan_impl(fn, init, xs)
@@ -325,7 +334,8 @@ class TRMInner(nn.Module):
     def _H_level_grad(self, z_H: torch.Tensor, z_L: torch.Tensor, cos_sin: Optional[CosSin]) -> torch.Tensor:
         return self.L_level(z_H, z_L, cos_sin=cos_sin)
 
-    # Not compiled: register_hook requires eager execution. _run_l_nograd / _L_level_step_grad remain compiled.
+    # Not compiled itself: hooks (logging mode) require eager execution. With step_norms=None
+    # this is a plain loop over _L_level_step_grad, traceable by an outer compile.
     def _run_l_scan(self, z_l: torch.Tensor, z_h_inject: torch.Tensor, cos_sin: Optional[CosSin], step_norms: Optional[Dict[str, torch.Tensor]] = None) -> torch.Tensor:
         for i in range(self.config.L_cycles):
             z_l = self._L_level_step_grad(z_l, z_h_inject, cos_sin)
@@ -375,11 +385,13 @@ class TRMInner(nn.Module):
             z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
         )
 
-    # Disabled for compilation: register_hook requires eager execution; parent compiler sees this as
-    # opaque, preventing guard failures on _pending_grad_norms and grad_mode. _run_l_nograd,
-    # _H_level_nograd, _L_level_step_grad, and _H_level_grad are still compiled.
-    @torch.compiler.disable
     def forward(self, carry: TRMInnerCarry, batch: TRMBatch) -> Tuple[TRMInnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        return self._forward_fn(carry, batch)
+
+    # Selected via _forward_fn in __init__: wrapped in compiler.disable when gradnorm
+    # logging is on (register_hook requires eager; the compiled sub-fns still fire),
+    # left traceable otherwise so outer compiles capture the TRM without graph breaks.
+    def _forward_impl(self, carry: TRMInnerCarry, batch: TRMBatch) -> Tuple[TRMInnerCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         cos_sin = self._get_cos_sin()
 
         # Input encoding
@@ -388,9 +400,12 @@ class TRMInner(nn.Module):
         # Forward iterations
         z_H, z_L = carry.z_H, carry.z_L
 
-        # Set up per-step grad norm / delta tracking (warmup + final pass)
-        step_norms: Dict[str, torch.Tensor] = {}
-        if self.training:
+        # Set up per-step grad norm / delta tracking (warmup + final pass), only when
+        # gradnorm logging is enabled (in which case this whole method runs eager).
+        log = self.log_trm_gradnorms and self.training
+        step_norms: Optional[Dict[str, torch.Tensor]] = None
+        if log:
+            step_norms = {}
             self._pending_grad_norms.append(step_norms)
 
         # H_cycles-1 warmup passes without grad (compiled no-grad variants avoid grad_mode recompile)
@@ -400,7 +415,7 @@ class TRMInner(nn.Module):
                 z_L = self._run_l_nograd(z_L, z_H_inject, cos_sin)
                 z_H_before = z_H
                 z_H = self._H_level_nograd(z_H, z_L, cos_sin)
-                if self.training:
+                if log:
                     step_norms[f"y_{h}_delta"] = (z_H - z_H_before).norm()
                     step_norms[f"y_{h}_cossim"] = F.cosine_similarity(z_H, z_H_before, dim=-1).mean()
 
@@ -412,11 +427,11 @@ class TRMInner(nn.Module):
             z_L = self._run_l_nograd(z_L, z_H_inject, cos_sin)
             z_H = self._H_level_nograd(z_H, z_L, cos_sin)
         else:
-            z_L = self._run_l_scan(z_L, z_H_inject, cos_sin, step_norms=step_norms if self.training else None)
+            z_L = self._run_l_scan(z_L, z_H_inject, cos_sin, step_norms=step_norms)
             z_H = self._H_level_grad(z_H, z_L, cos_sin)
-            if self.training and z_H.requires_grad:
+            if log and z_H.requires_grad:
                 z_H.register_hook(lambda g: step_norms.update({"y": g.detach().norm()}))
-        if self.training:
+        if log:
             h = self.config.H_cycles - 1
             step_norms[f"y_{h}_delta"] = (z_H.detach() - z_H_before.detach()).norm()
             step_norms[f"y_{h}_cossim"] = F.cosine_similarity(z_H.detach(), z_H_before.detach(), dim=-1).mean()
@@ -502,6 +517,9 @@ class TRM(nn.Module):
         self.inner = TRMInner(self.config).to(torch.device('cuda'))
         self.use_act = self.config.halt_max_steps > 1
         self._halt_update_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = self._halt_update_eval
+        # Mirror TRMInner: eager (compiler-disabled) forward when gradnorm logging is on,
+        # traceable forward otherwise so outer compiles (loss_fn / planner) see no graph break.
+        self._forward_fn = torch.compiler.disable(self._forward_impl) if self.config.log_trm_gradnorms else self._forward_impl
         self.train(self.training)
 
     def train(self, mode: bool = True):
@@ -538,10 +556,13 @@ class TRM(nn.Module):
             )
         )
         
-    # Disabled for compilation: prevents the parent (loss_fn) from tracing through encode→TRM,
-    # which would guard on grad_mode and recompile when called from planning (no-grad context).
-    @torch.compiler.disable
     def forward(self, carry: TRMCarry, batch: Dict[str, torch.Tensor]) -> Tuple[TRMCarry, Dict[str, torch.Tensor]]:
+        return self._forward_fn(carry, batch)
+
+    # Selected via _forward_fn in __init__ (compiler-disabled only in gradnorm-logging mode).
+    # When traced by an outer compile this guards on grad_mode / training mode, so the first
+    # planner call after a training update recompiles once per mode; steady-state is stable.
+    def _forward_impl(self, carry: TRMCarry, batch: Dict[str, torch.Tensor]) -> Tuple[TRMCarry, Dict[str, torch.Tensor]]:
         batch = self._normalize_batch(batch)
         # Update data, carry (removing halted sequences)
         new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
