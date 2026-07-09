@@ -79,9 +79,12 @@ class SRM(nn.Module):
 
         self._init_weights()
 
-        if self.log_gradnorms:
-            self._pending_grad_norms: List[Dict[str, torch.Tensor]] = []
-        else:
+        # Always create the scaffold (like SimpleTRM) so drain_grad_norms() is safe
+        # even when logging is off -- tdmpc2.py drains "simple"/"srm" unconditionally.
+        # forward() only touches it under `log_gradnorms and training`, so it stays
+        # untouched (and empty) in the compiled, no-logging path below.
+        self._pending_grad_norms: List[Dict[str, torch.Tensor]] = []
+        if not self.log_gradnorms:
             self.forward = torch.compile(self.forward, fullgraph=True)
 
     def _init_weights(self):
