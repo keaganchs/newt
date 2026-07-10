@@ -129,6 +129,19 @@ launch() {
         C["$k"]="$v"
     done
 
+    # -- bf16 for the recursive dynamics (SimpleTRM/TRM/SRM): ~2x on the memory-bound
+    #    planner + update (bf16 tensor cores; master weights & env I/O stay fp32). Skipped
+    #    for the Newt MLP baseline (use_trm_dynamics=None), which is benchmarked separately.
+    #    A cell may still override amp_dtype explicitly (the merge above wins). --
+    case "${C[use_trm_dynamics]}" in
+        trm) [ -z "${C[amp_dtype]:-}" ] && C[amp_dtype]="bfloat16" ;;
+    esac
+    
+    # case "${C[use_trm_dynamics]}" in
+    #     simple|trm|srm) [ -z "${C[amp_dtype]:-}" ] && C[amp_dtype]="bfloat16" ;;
+    # esac
+
+
     # -- emit one run per seed --
     local SEED
     for SEED in "${SEEDS[@]}"; do
