@@ -1,3 +1,4 @@
+import contextlib
 from copy import deepcopy
 
 import torch
@@ -21,6 +22,12 @@ class TDMPC2(torch.nn.Module):
 		self.cfg.action_dim = cfg.action_dim
 		self.device = torch.device(f'cuda:{self.cfg.rank}')
 		self.model = model
+		# Mixed-precision autocast for the compiled forward/plan/update regions. Params
+		# (master weights) stay fp32; autocast keeps norms/softmax/two-hot/losses in fp32;
+		# actions are cast back to fp32 at the env boundary (forward()). None -> disabled.
+		self._amp_dtype = getattr(torch, self.cfg.amp_dtype) if getattr(self.cfg, 'amp_dtype', None) else None
+		if self._amp_dtype is not None and self.cfg.rank == 0:
+			print(f'Autocast mixed precision enabled: {self.cfg.amp_dtype}')
 		self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._dynamics.parameters()},
@@ -59,22 +66,40 @@ class TDMPC2(torch.nn.Module):
 		# Compile methods for faster training/inference
 		if self.compile and self.cfg.rank == 0:
 			print('Compiling methods...')
-		self.pi = self._maybe_compile(self._pi)
+		self.pi = self._amp_wrap(self._maybe_compile(self._pi))
 		# Planning is the dominant *acting* cost (MPPI rolls the recursive world model
 		# iterations*horizon times per action) and is otherwise launch-overhead bound.
 		# Compile it too when single-GPU: the "multiproc is fixed" TODO only concerns
 		# world_size>1 (DDP + cudagraphs on the planning path). Gated by cfg.compile_planning.
 		if self.cfg.world_size == 1 and getattr(self.cfg, 'compile_planning', True):
-			self.sample_pi_trajs = self._maybe_compile(self._sample_pi_trajs)
-			self.mppi = self._maybe_compile(self._mppi)
+			self.sample_pi_trajs = self._amp_wrap(self._maybe_compile(self._sample_pi_trajs))
+			self.mppi = self._amp_wrap(self._maybe_compile(self._mppi))
 		else:
-			self.sample_pi_trajs = self._sample_pi_trajs
-			self.mppi = self._mppi
-		self.pi_loss = self._maybe_compile(self._pi_loss)
-		self.loss_fn = self._maybe_compile(self._loss_fn)
+			self.sample_pi_trajs = self._amp_wrap(self._sample_pi_trajs)
+			self.mppi = self._amp_wrap(self._mppi)
+		self.pi_loss = self._amp_wrap(self._maybe_compile(self._pi_loss))
+		self.loss_fn = self._amp_wrap(self._maybe_compile(self._loss_fn))
 
 	def _maybe_compile(self, fn):
 		return torch.compile(fn, mode="reduce-overhead") if self.cfg.compile else fn
+
+	def _autocast(self):
+		"""bf16/fp16 autocast context for model regions; no-op when amp is disabled."""
+		if self._amp_dtype is None:
+			return contextlib.nullcontext()
+		return torch.autocast('cuda', dtype=self._amp_dtype)
+
+	def _amp_wrap(self, fn):
+		"""Run a (possibly compiled) callable under autocast. Autocast sits *outside* the
+		compiled fn so dynamo captures the ambient autocast state at trace time and bakes
+		bf16 kernels into the (cudagraph) graph -- the pattern validated in
+		benchmarks/bench_precision.py. Identity when amp is disabled (byte-identical fp32)."""
+		if self._amp_dtype is None:
+			return fn
+		def wrapped(*args, **kwargs):
+			with torch.autocast('cuda', dtype=self._amp_dtype):
+				return fn(*args, **kwargs)
+		return wrapped
 
 	def _grad_norm(self, params):
 		with torch.no_grad():
@@ -161,8 +186,10 @@ class TDMPC2(torch.nn.Module):
 			if eval_mode:
 				action = info["mean"]
 
-		# action = action.to(torch.float32)
-		return action.cpu()
+		# Cast the action back to fp32 at the env boundary: under bf16/fp16 autocast the
+		# planner/policy may hand back a reduced-precision action, but the environments
+		# and replay buffer expect fp32. No-op when amp is disabled.
+		return action.float().cpu()
 	
 	@torch.no_grad()
 	def _estimate_value(self, z, actions, task):
@@ -495,8 +522,9 @@ class TDMPC2(torch.nn.Module):
 		if self.cfg.lr_schedule:
 			self.scheduler.step()
 
-		# Precompute next_z to avoid grad_mode recompiles in self.loss_fn when encode is called both with and without grad enabled
-		with torch.no_grad():
+		# Precompute next_z to avoid grad_mode recompiles in self.loss_fn when encode is called both with and without grad enabled.
+		# Under autocast, run this at the same precision loss_fn uses so the target and online encodes match (and next_z's dtype is stable for the cudagraph).
+		with torch.no_grad(), self._autocast():
 			next_z = self.model.encode(obs[1:], task)
 
 		# Compute loss

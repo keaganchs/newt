@@ -110,11 +110,11 @@ class Config:
 	dis_loss_coef: float = 1.0								# coefficient for the DIS auxiliary loss (only used when use_dis_loss=True)
 
 	# logging
-	log_trm_gradnorms: bool = False							# log per-step gradient norms through SimpleTRM recursion (disables torch.compile on inner apply fns)
+	log_trm_gradnorms: bool = False							# log per-step gradient norms through TRM/SimpleTRM recursion (forces eager forward passes: disables torch.compile tracing through the recursive core)
 	wandb_project: str = "TRM Dynamics"							# wandb project name
 	wandb_entity: str = "trm-dynamics"							# wandb entity (user) name
-	wandb_group: Optional[str] = None								# wandb group name override (defaults to a combination of config options, seen in tdmpc2/common/logger.py)
-	wandb_run_name: Optional[str] = "dmc_strmd_384ld_4h3l_film_mx_sigreg_0p1_dis"				# wandb run name (defaults to <seed>)
+	wandb_group: Optional[str] = "trm_speedtest"								# wandb group name override (defaults to a combination of config options, seen in tdmpc2/common/logger.py)
+	wandb_run_name: Optional[str] = "dmc_simple"				# wandb run name (defaults to <seed>)
 	enable_wandb: bool = True								# whether to enable wandb logging
 
 	# misc
@@ -155,6 +155,7 @@ class Config:
 	halt_exploration_prob: float = 0.0						# For epsilon-greedy exploration
 
 	forward_dtype: str = "float32"							# bfloat16 is only supported on RTX 3000 series GPUs and newer
+	amp_dtype: Optional[str] = None							# mixed-precision autocast dtype for the compiled forward/plan/update regions: None (off), "bfloat16" (recommended; ~2x on the memory-bound TRM planner, as in the original TRM paper) or "float16". Master weights & env I/O stay fp32; autocast auto-keeps norms/softmax/two-hot/losses in fp32. bf16 needs no grad scaler.
 
 	# convenience (filled at runtime)
 	work_dir: Optional[str] = None
@@ -240,6 +241,19 @@ def parse_cfg(cfg):
 		cfg.wm_regularization_type = "none"
 	assert cfg.wm_regularization_type in ("simnorm", "sigreg", "none"), \
 		f'Invalid wm_regularization_type {cfg.wm_regularization_type}. Must be "simnorm", "sigreg", or None/"none".'
+
+	# The planning-depth override (planning_H_cycles / planning_L_cycles) is only wired
+	# through WorldModel.next() for the "simple" dynamics. For "trm"/"srm" (and the plain
+	# MLP) it is silently ignored: those models read H_cycles/L_cycles off their own config,
+	# so MPPI rolls the world model at the *training* depth regardless. Warn once so the
+	# knob isn't mistaken for an active lever (it is the dominant acting-time cost).
+	if (cfg.planning_H_cycles is not None or cfg.planning_L_cycles is not None) \
+			and cfg.use_trm_dynamics != "simple":
+		print(colored(
+			f'[config] planning_H_cycles/planning_L_cycles are IGNORED for '
+			f'use_trm_dynamics={cfg.use_trm_dynamics!r} (only "simple" honors them). '
+			f'Planning will run at the training depth H={cfg.H_cycles}, L={cfg.L_cycles}.',
+			'yellow', attrs=['bold']))
 
 	# Set defaults
 	cfg.tasks = TASK_SET.get(cfg.task, [cfg.task] * cfg.num_envs)
