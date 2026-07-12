@@ -126,3 +126,5 @@ dmypy.json
 
 # Benchmarks
 benchmarks/*_results.json
+analysis/cache/
+
