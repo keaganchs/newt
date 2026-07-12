@@ -32,7 +32,7 @@ use_dis_loss=False        xl_dynamics_mlp=False
 use_simple_trm_skip_connections=False
 rrm_mask_x_for_y_update=True
 compile=True              log_trm_gradnorms=False
-H_cycles=4  L_cycles=3
+L_layers=1  H_cycles=4  L_cycles=3   (L_layers=1 for smp/srm; TRM cells set L_layers=2)
 task=dmcontrol  num_envs=21  obs=state  model_size=S  use_trm_encoder=False
 ```
 
@@ -62,13 +62,14 @@ group. To pull a whole plan, filter groups by the `<plan_tag>/` prefix.
 | `model_size/` | B2 Newt MLP {M,L} | `abl_model_size` | A100 | 2×3 |
 | `mask_x/` | D4 rrm_mask_x_for_y_update {True,False} | `abl_mask_x` | A100 | 2×3 |
 | `gradnorm/` | D1 gradnorm logging, gate × {1h1l,8h4l} | `abl_gradnorm` | A100 | 8×3 |
+| `l_layers/` | core depth L_layers {2,4,8} × {smp,srm} × ld {16,384} @1h1l | `abl_l_layers` | 3090 | 12×3 |
 | `planning_cycles/` | D3 planning_H_cycles {1,2,4,8} | `abl_d3_planning_cycles` | A100, eval | — |
 | `video/` | U1 rollout videos | `abl_u1_video` | A100, eval | — |
 | `bench/` | 3090 concurrency benchmark | — | 3090 | — |
 
 ¹ **split**: `1h1l`/`2h2l` cells are `*.slurm.sh` (3090); `4h3l`/`8h4l` are `*.sh` (A100).
 
-**Totals:** 76 training cells × 3 seeds = **228 runs** (186 on A100, 42 on 3090),
+**Totals:** 88 training cells × 3 seeds = **264 runs** (186 on A100, 78 on 3090),
 plus the two eval-only templates and the benchmark.
 
 ## Crash handling — 8h4l runs are isolated
@@ -117,7 +118,18 @@ Their `CHECKPOINTS` arrays are **empty by design** (the scripts abort until fill
   presets don't clobber it; for recursive variants `hidden_size=latent_dim` too.
   `num_heads` stays at the `S` preset (=2), which divides every latent_dim (16/128/
   384/512), and `simnorm_dim=8` divides them too — no divisibility fixes needed.
-- **`xl_dynamics_mlp` only with `use_trm_dynamics=None`** (no-op for simple/trm/srm).
+- **`L_layers` sets the depth of the recursive core `f`** in SimpleTRM/SRM
+  (`L_layers` NormedLinear layers, width = latent_dim; last carries the latent
+  activation), analogous to TRM stacking `L_layers` blocks. See
+  `common/layers.py::_core_hidden_dims`. Previously SimpleTRM/SRM **ignored**
+  `config.L_layers` (always a single projection). The config default is **`1`**
+  (the historical single-projection core, so previously-run smp/srm scripts are
+  unchanged); the anchor sets it explicitly. **TRM cells set `L_layers=2`**
+  (`latent_dim/trm_ld.sh`) to keep TRM's original 2-block depth, since the default
+  drop to 1 would otherwise halve it. The `l_layers/` SRM cells also set
+  `srm_truncation_length=1` (required at `L_cycles=1`).
+- **`xl_dynamics_mlp` only with `use_trm_dynamics=None`** (no-op for simple/trm/srm);
+  when set it overrides `L_layers` with the historical wide `[512,512]` core.
 - **B2** uses `launch_raw` so the size preset sets `enc_dim`/`mlp_dim`/`num_q`.
 - **Gradnorm runs keep `compile=True`.** `log_trm_gradnorms` doesn't need a global
   `compile=False`: `SimpleTRM.forward` is absorbed into the `loss_fn` compile
