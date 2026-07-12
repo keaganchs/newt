@@ -20,6 +20,8 @@
 #   use_simple_trm_skip_connections=False
 #   rrm_mask_x_for_y_update=True
 #   compile=True              log_trm_gradnorms=False
+#   L_layers=1                (SimpleTRM/SRM core = historical single projection;
+#                              the l_layers axis sweeps this. TRM cells override to 2.)
 #   H_cycles=4  L_cycles=3    (the S-preset "recursion on" depth; the plan fixes
 #                              everything except cycles, so 4h3l is the anchor
 #                              depth for experiments that do not sweep cycles)
@@ -117,6 +119,7 @@ launch() {
         [log_trm_gradnorms]="False"
         [H_cycles]="4"
         [L_cycles]="3"
+        [L_layers]="1"
         [enable_wandb]="True"
         [wandb_project]="TRM Dynamics"
         [wandb_entity]="trm-dynamics"
