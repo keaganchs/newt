@@ -83,10 +83,31 @@ def mlp(in_dim, mlp_dims, out_dim, act=None):
 	return nn.Sequential(*mlp)
 
 
+def _core_hidden_dims(cfg):
+	"""Hidden-layer widths for the recursive dynamics core (SimpleTRM / SRM).
+
+	`L_layers` sets the DEPTH of the per-step network f -- analogous to TRM
+	stacking `L_layers` reasoning blocks (see common/trm/trm.py). Passed to
+	`mlp(...)`, a list of length L_layers-1 yields L_layers NormedLinear layers
+	total (hidden layers use Mish; the final layer carries the latent activation).
+	So L_layers=1 is a single projection, L_layers=2 a 2-layer MLP, etc.
+
+	`xl_dynamics_mlp` keeps its historical wide [512, 512] core and takes
+	precedence (it predates L_layers wiring). Hidden width otherwise follows
+	latent_dim, matching the core's output width.
+	"""
+	if cfg.xl_dynamics_mlp:
+		return [512, 512]
+	return [cfg.latent_dim] * max(cfg.L_layers - 1, 0)
+
+
 class FiLM(nn.Module):
 	"""
-	Feature-wise Linear Modulation: y = gamma(cond) * x + beta(cond).
-	Projects cond to per-feature scale and shift parameters.
+	Feature-wise Linear Modulation (Perez et al., 2017): y = (1 + gamma(cond)) * x + beta(cond).
+	gamma is predicted as an offset from a baseline of 1 (as in the official FiLM
+	implementation), so modulation starts near identity instead of near-zeroing features.
+	compute()/modulate() are split so the cond projections can be computed once per
+	forward pass and reused across recursion cycles while cond is unchanged.
 	"""
 
 	def __init__(self, cond_dim: int, feature_dim: int):
@@ -94,18 +115,86 @@ class FiLM(nn.Module):
 		self.gamma = nn.Linear(cond_dim, feature_dim)
 		self.beta = nn.Linear(cond_dim, feature_dim)
 
+	def compute(self, cond: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+		return self.gamma(cond), self.beta(cond)
+
+	@staticmethod
+	def modulate(x: torch.Tensor, gamma: torch.Tensor, beta: torch.Tensor) -> torch.Tensor:
+		return (1.0 + gamma) * x + beta
+
 	def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-		return self.gamma(cond) * x + self.beta(cond)
+		gamma, beta = self.compute(cond)
+		return self.modulate(x, gamma, beta)
 
 	def __repr__(self):
 		return f"FiLM(cond_dim={self.gamma.in_features}, feature_dim={self.gamma.out_features})"
 
 
+class FiLMBlock(nn.Module):
+	"""
+	Linear -> LayerNorm -> FiLM -> activation, mirroring the FiLM-ed residual blocks of
+	Perez et al. (2017): modulation lands after normalization and before the
+	nonlinearity, with an unmodulated residual path around the block when widths match.
+	gamma/beta arrive precomputed (see FiLMedMLP.compute_film).
+	"""
+
+	def __init__(self, in_dim: int, out_dim: int, act=None, residual: bool = False):
+		super().__init__()
+		assert not residual or in_dim == out_dim, "residual FiLMBlock requires in_dim == out_dim"
+		self.linear = nn.Linear(in_dim, out_dim)
+		self.ln = nn.LayerNorm(out_dim)
+		self.act = nn.Mish(inplace=False) if act is None else act
+		self.residual = residual
+
+	def forward(self, x: torch.Tensor, gamma: torch.Tensor, beta: torch.Tensor) -> torch.Tensor:
+		h = self.act(FiLM.modulate(self.ln(self.linear(x)), gamma, beta))
+		return x + h if self.residual else h
+
+	def __repr__(self):
+		return f"FiLMBlock(in_features={self.linear.in_features}, "\
+			f"out_features={self.linear.out_features}, "\
+			f"act={self.act.__class__.__name__}, residual={self.residual})"
+
+
+class FiLMedMLP(nn.Module):
+	"""
+	FiLM-conditioned counterpart of mlp(): every layer is a FiLMBlock with its own
+	gamma/beta projections from cond, so conditioning reaches each layer pre-activation
+	as in the original paper. Hidden layers use Mish and a residual path where widths
+	match; the final layer carries `act` (the latent activation) and no residual, so
+	constrained outputs (e.g. SimNorm) are preserved.
+
+	Call compute_film(cond) once per forward pass (or whenever cond changes) and pass
+	the result to forward() -- the cond projections are not recomputed per call.
+	"""
+
+	def __init__(self, in_dim, mlp_dims, out_dim, cond_dim, act=None):
+		super().__init__()
+		if isinstance(mlp_dims, int):
+			mlp_dims = [mlp_dims]
+		dims = [in_dim] + list(mlp_dims) + [out_dim]
+		blocks = [FiLMBlock(dims[i], dims[i+1], residual=dims[i] == dims[i+1])
+			for i in range(len(dims) - 2)]
+		blocks.append(FiLMBlock(dims[-2], dims[-1], act=act if act else nn.Identity()))
+		self.blocks = nn.ModuleList(blocks)
+		self.films = nn.ModuleList([FiLM(cond_dim, d) for d in dims[1:]])
+
+	def compute_film(self, cond: torch.Tensor) -> Tuple[Tuple[torch.Tensor, torch.Tensor], ...]:
+		return tuple(film.compute(cond) for film in self.films)
+
+	def forward(self, x: torch.Tensor, film_params) -> torch.Tensor:
+		for block, (gamma, beta) in zip(self.blocks, film_params):
+			x = block(x, gamma, beta)
+		return x
+
+
 class FiLMDynamics(nn.Module):
 	"""
-	Dynamics model with FiLM task conditioning.
-	Processes [z, action] through a hidden layer, conditions it with the task
-	embedding via FiLM, then projects to the next latent state.
+	Dynamics model with FiLM task conditioning (non-recursive Newt baseline), built on
+	FiLMedMLP: the conditioning signal modulates every layer pre-activation. With
+	film_action_conditioning the signal is [task_emb, action] and the trunk consumes
+	only z; otherwise task_emb alone modulates and the action joins the trunk input.
+	xl_dynamics_mlp sizes the core [512, 512] instead of the single mlp_dim hidden layer.
 
 	Accepts the same concatenated input as the default dynamics model:
 	x = [z (latent_dim) | task_emb (task_dim) | action (action_dim)]
@@ -115,17 +204,22 @@ class FiLMDynamics(nn.Module):
 		super().__init__()
 		self.latent_dim = cfg.latent_dim
 		self.task_dim = cfg.task_dim
-		self.fc1 = NormedLinear(cfg.latent_dim + cfg.action_dim, cfg.mlp_dim)
-		self.film = FiLM(cfg.task_dim, cfg.mlp_dim)
-		self.fc2 = NormedLinear(cfg.mlp_dim, cfg.latent_dim, act=latent_act(cfg))
+		self.action_cond = cfg.film_action_conditioning
+		hidden_dims = [512, 512] if cfg.xl_dynamics_mlp else [cfg.mlp_dim]
+		in_dim = cfg.latent_dim + (0 if self.action_cond else cfg.action_dim)
+		cond_dim = cfg.task_dim + (cfg.action_dim if self.action_cond else 0)
+		self.core = FiLMedMLP(in_dim, hidden_dims, cfg.latent_dim,
+			cond_dim=cond_dim, act=latent_act(cfg))
 
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
 		z = x[..., :self.latent_dim]
 		task_emb = x[..., self.latent_dim:self.latent_dim + self.task_dim]
 		action = x[..., self.latent_dim + self.task_dim:]
-		h = self.fc1(torch.cat([z, action], dim=-1))
-		h = self.film(h, task_emb)
-		return self.fc2(h)
+		if self.action_cond:
+			feats, cond = z, torch.cat([task_emb, action], dim=-1)
+		else:
+			feats, cond = torch.cat([z, action], dim=-1), task_emb
+		return self.core(feats, self.core.compute_film(cond))
 
 
 def policy(in_dim, mlp_dims, out_dim, act=None):

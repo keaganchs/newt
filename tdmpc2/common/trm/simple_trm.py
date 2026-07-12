@@ -2,7 +2,7 @@ from typing import List, Dict
 
 from dataclasses import dataclass
 
-from common.layers import mlp, SimNorm, NormedLinear, FiLM, latent_act
+from common.layers import mlp, SimNorm, NormedLinear, FiLMedMLP, latent_act, _core_hidden_dims
 from common.trm.trm_layers import trunc_normal_init_, SwiGLU
 from common.trm.dis_utils import advantage_margin, dis_beta, advantage_margin_curve_from_pending
 
@@ -28,7 +28,10 @@ class SimpleTRM(nn.Module):
     Simple TRM architecture for modeling dynamics in TD-MPC2.
 
     MLP layers have layer norm, with middle layers having a Mish activation and the final layer having a SimNorm activation.
-    When use_film_dynamics=True, uses FiLM conditioning for the task embedding.
+    When use_film_dynamics=True, task_emb (and, with film_action_conditioning, the
+    action) conditions the recursive core via per-layer FiLM (pre-activation, gamma
+    baseline 1, residual paths — see FiLMedMLP) instead of being concatenated into
+    the trunk input.
     """
     def __init__(self, config: Config):
         super().__init__()
@@ -40,32 +43,23 @@ class SimpleTRM(nn.Module):
         self.latent_dim = config.latent_dim
 
         if self.use_film:
-            # Save values used for slicing the input in _apply_film
-            self.task_dim = config.task_dim
-            self.action_dim = config.action_dim
-
-            # x = [z_initial | task_emb | action]; condition via FiLM on both task and action
-            input_dim = config.latent_dim + 2 * config.latent_dim # wm dim + latent_dim for the y and z carries
-            # hidden_mlp_dim = int(config.hidden_size * config.expansion)
-            hidden_mlp_dim = self.latent_dim
-            self.fc1 = NormedLinear(input_dim, hidden_mlp_dim)
-            self.film = FiLM(config.task_dim + self.action_dim, hidden_mlp_dim)
-            self.fc2 = NormedLinear(hidden_mlp_dim, config.latent_dim, act=latent_act(config))
-
-            # self.fc1 = nn.Sequential(
-            #     SwiGLU(input_dim, expansion=config.expansion),
-            #     NormedLinear(input_dim, config.latent_dim, act=SimNorm(config))
-            # )
-            # self.film = FiLM(config.task_dim + self.action_dim, hidden_mlp_dim)
-            # self.fc2 = nn.Sequential(
-            #     SwiGLU(hidden_mlp_dim, expansion=config.expansion),
-            #     NormedLinear(hidden_mlp_dim, config.latent_dim, act=SimNorm(config))
-            # )
-
-
+            # x = [z_initial | task_emb | action]; task_emb (and, with
+            # film_action_conditioning, the action) conditions every core layer via FiLM
+            # (pre-activation, with residual paths — see FiLMedMLP); without it the
+            # action joins the trunk input instead. Trunk features are [z_initial, y, z]
+            # (+ action). Depth follows L_layers via _core_hidden_dims, matching the
+            # non-FiLM core.
+            self.film_action_cond = config.film_action_conditioning
+            input_dim = 3 * config.latent_dim \
+                + (0 if self.film_action_cond else config.action_dim)
+            cond_dim = config.task_dim \
+                + (config.action_dim if self.film_action_cond else 0)
+            hidden_dims = _core_hidden_dims(config)
+            self.core = FiLMedMLP(input_dim, hidden_dims, config.latent_dim,
+                                  cond_dim=cond_dim, act=latent_act(config))
         else:
             input_dim = config.task_dim + config.action_dim + (3 * config.latent_dim) # wm dim + task + action in x, latent_dim for the y and z carries
-            hidden_dims = [512, 512] if config.xl_dynamics_mlp else []
+            hidden_dims = _core_hidden_dims(config)
             self.mlp = mlp(input_dim, hidden_dims, config.latent_dim, act=latent_act(config))
             # self.mlp = nn.Sequential(
             #     SwiGLU(input_dim, expansion=config.expansion),
@@ -96,19 +90,27 @@ class SimpleTRM(nn.Module):
         z = trunc_normal_init_(torch.empty(*batch_shape, self.config.latent_dim, device=x.device, dtype=x.dtype), std=0.02)
         return SimpleTRMCarry(x, y, z)
 
-    def _apply_film(self, carry: SimpleTRMCarry, mask_x: bool = False) -> torch.Tensor:
-        latent_dim = self.config.latent_dim
-        task_dim = self.config.task_dim
-        z_initial = carry.x[..., :latent_dim]
-        task_emb = carry.x[..., latent_dim:latent_dim + task_dim]
-        action = carry.x[..., latent_dim + task_dim:]
-        cond = torch.cat([task_emb, action], dim=-1)
+    def _film_params(self, x: torch.Tensor):
+        """Per-layer FiLM (gamma, beta) from the conditioning slice of x ([task_emb]
+        or [task_emb | action], per film_action_conditioning). x is fixed for a whole
+        forward pass, so this is computed once up front and reused across all
+        recursion cycles."""
+        if self.film_action_cond:
+            cond = x[..., self.latent_dim:]
+        else:
+            cond = x[..., self.latent_dim:self.latent_dim + self.config.task_dim]
+        return self.core.compute_film(cond)
+
+    def _apply_film(self, carry: SimpleTRMCarry, film_params, mask_x: bool = False) -> torch.Tensor:
+        z_initial = carry.x[..., :self.latent_dim]
         if mask_x:
             z_initial = torch.zeros_like(z_initial)
-        h = self.fc1(torch.cat([z_initial, carry.y, carry.z], dim=-1))
-        return self.fc2(self.film(h, cond))
+        feats = [z_initial, carry.y, carry.z]
+        if not self.film_action_cond:
+            feats.append(carry.x[..., self.latent_dim + self.config.task_dim:])
+        return self.core(torch.cat(feats, dim=-1), film_params)
 
-    def _apply_mlp(self, carry: SimpleTRMCarry, mask_x: bool = False) -> torch.Tensor:
+    def _apply_mlp(self, carry: SimpleTRMCarry, film_params, mask_x: bool = False) -> torch.Tensor:
         x = torch.zeros_like(carry.x) if mask_x else carry.x
         return self.mlp(torch.cat([x, carry.y, carry.z], dim=-1))
 
@@ -139,6 +141,10 @@ class SimpleTRM(nn.Module):
         H = self.config.H_cycles if H_cycles is None else H_cycles
         L = self.config.L_cycles if L_cycles is None else L_cycles
 
+        # FiLM gamma/beta depend only on carry.x (fixed for this forward pass):
+        # compute once here instead of inside every recursion-cycle _apply call.
+        film_params = self._film_params(carry.x) if self.use_film else None
+
         step_norms: Dict[str, torch.Tensor] = {}
         if self.log_trm_gradnorms and self.training:
             self._pending_grad_norms.append(step_norms)
@@ -156,7 +162,7 @@ class SimpleTRM(nn.Module):
         for h in range(H - 1):
             for i in range(L):
                 z_before = carry.z
-                carry.z = self._apply_fn(carry).detach()
+                carry.z = self._apply_fn(carry, film_params).detach()
                 if self.use_skip:
                     carry.z = self._skip(carry.z, z_before.detach())
                 # Part 1: Advantage Margin on the low carry at every inner iteration.
@@ -170,7 +176,7 @@ class SimpleTRM(nn.Module):
                 # Capture this cycle's high-carry output WITH grad before detaching it into
                 # the carry: this gives a 1-step (deep-supervision) gradient through the
                 # single cycle while leaving the truncated-BPTT carry detach untouched.
-                y_pre = self._apply_fn(carry, mask_x=self.mask_x_for_y)
+                y_pre = self._apply_fn(carry, film_params, mask_x=self.mask_x_for_y)
                 if self.use_skip:
                     y_pre = self._skip(y_pre, y_before.detach())
                 carry.y = y_pre.detach()
@@ -186,7 +192,7 @@ class SimpleTRM(nn.Module):
                 if log_margin:
                     step_norms[f"y_{h}_dis_loss"] = dis_term.detach()
             else:
-                carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y).detach()
+                carry.y = self._apply_fn(carry, film_params, mask_x=self.mask_x_for_y).detach()
                 if self.use_skip:
                     carry.y = self._skip(carry.y, y_before.detach())
             if self.log_trm_gradnorms and self.training:
@@ -196,7 +202,7 @@ class SimpleTRM(nn.Module):
         # Final cycle with grad
         for i in range(L):
             z_before = carry.z
-            carry.z = self._apply_fn(carry)
+            carry.z = self._apply_fn(carry, film_params)
             if self.use_skip:
                 carry.z = self._skip(carry.z, z_before)
             if log_margin:
@@ -209,7 +215,7 @@ class SimpleTRM(nn.Module):
                 step_norms[f"z_{i}_delta"] = (carry.z.detach() - z_before.detach()).norm()
 
         y_before = carry.y
-        carry.y = self._apply_fn(carry, mask_x=self.mask_x_for_y)
+        carry.y = self._apply_fn(carry, film_params, mask_x=self.mask_x_for_y)
         if self.use_skip:
             carry.y = self._skip(carry.y, y_before)
         # Final cycle (s = H_cycles, beta = 1.0): its DIS target would be exactly z_star,
@@ -241,9 +247,7 @@ class SimpleTRM(nn.Module):
     def __repr__(self):
         lines = [f"SimpleTRM(H_cycles={self.config.H_cycles}, L_cycles={self.config.L_cycles}, skip={self.skip_type or 'none'})"]
         if self.use_film:
-            lines.append(f"  (fc1): {self.fc1}")
-            lines.append(f"  (film): {self.film}")
-            lines.append(f"  (fc2): {self.fc2}")
+            lines.append(f"  (core): {self.core}")
         else:
             lines.append(f"  (mlp): {self.mlp}")
         if self.skip_type == "mlp" or self.skip_type == "swiglu":

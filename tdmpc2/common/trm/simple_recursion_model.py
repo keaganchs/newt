@@ -2,7 +2,7 @@ from typing import Dict, List, Tuple
 
 from dataclasses import dataclass
 
-from common.layers import mlp, SimNorm, NormedLinear, FiLM, latent_act
+from common.layers import mlp, SimNorm, NormedLinear, FiLMedMLP, latent_act, _core_hidden_dims
 from common.trm.trm_layers import trunc_normal_init_, SwiGLU
 from common.trm.dis_utils import advantage_margin, dis_beta, advantage_margin_curve_from_pending
 
@@ -52,30 +52,44 @@ class SRM(nn.Module):
         self.grad_cycles = self.truncation_length
 
         x_dim = config.latent_dim + config.task_dim + config.action_dim
+        hidden_dims = _core_hidden_dims(config)
 
         # fnew: computes the skip-connection context from z0 at the start of each reasoning step
         self.context_net = nn.Sequential(
-            SwiGLU(config.latent_dim, expansion=config.expansion),
-            NormedLinear(config.latent_dim, config.hidden_size, act=nn.Mish()),
+            # SwiGLU(config.latent_dim, expansion=config.expansion),
+            # NormedLinear(config.latent_dim, config.hidden_size, act=nn.Mish()),
+            mlp(config.latent_dim, hidden_dims, config.hidden_size, act=nn.Mish())
         )
 
+        # f: the shared recursive core. L_layers sets its depth (see _core_hidden_dims).
         if self.use_film:
-            # FiLM conditioning: context modulates x before it's combined with z
-            # This keeps the skip connection "active" at every inner iteration
-            self.film = FiLM(cond_dim=config.hidden_size, feature_dim=x_dim)
-            net_input_dim = config.latent_dim + x_dim
+            # FiLM conditioning: task_emb (and, with film_action_conditioning, the
+            # action) modulates the core's hidden features at every layer
+            # (pre-activation, gamma baseline 1, residual paths — see FiLMedMLP);
+            # without it the action joins the trunk input. The context also joins the
+            # trunk directly (as in the non-FiLM core), keeping the skip connection
+            # active at every inner iteration, so trunk features are
+            # [z, z0 (+ action), context].
+            self.film_action_cond = config.film_action_conditioning
+            cond_dim = config.task_dim \
+                + (config.action_dim if self.film_action_cond else 0)
+            trunk_in = 2 * config.latent_dim + config.hidden_size \
+                + (0 if self.film_action_cond else config.action_dim)
+            self.net = FiLMedMLP(
+                trunk_in,
+                hidden_dims,
+                config.latent_dim,
+                cond_dim=cond_dim,
+                act=latent_act(config),
+            )
         else:
             # Without FiLM: concatenate [z, x, context] directly.
-            net_input_dim = config.latent_dim + x_dim + config.hidden_size
-
-        # f: the shared recursive core.
-        hidden_dims = [512, 512] if config.xl_dynamics_mlp else []
-        self.net = mlp(
-            net_input_dim,
-            hidden_dims,
-            config.latent_dim,
-            act=latent_act(config),
-        )
+            self.net = mlp(
+                config.latent_dim + x_dim + config.hidden_size,
+                hidden_dims,
+                config.latent_dim,
+                act=latent_act(config),
+            )
 
         self._init_weights()
 
@@ -100,12 +114,27 @@ class SRM(nn.Module):
         context = self.context_net(z)
         return SRMCarry(x, z, context)
 
-    def _apply_fun(self, carry: SRMCarry) -> SRMCarry:
-        if self.use_film:
-            net_input = torch.cat([carry.z, self.film(carry.x, carry.context)], dim=-1)
+    def _film_params(self, x: torch.Tensor):
+        """Per-layer FiLM (gamma, beta) from the conditioning slice of x ([task_emb]
+        or [task_emb | action], per film_action_conditioning). x is fixed for a whole
+        forward pass, so this is computed once up front and reused across all cycles."""
+        latent_dim, task_dim = self.config.latent_dim, self.config.task_dim
+        if self.film_action_cond:
+            cond = x[..., latent_dim:]
         else:
-            net_input = torch.cat([carry.z, carry.x, carry.context], dim=-1)
-        z = self.net(net_input)
+            cond = x[..., latent_dim:latent_dim + task_dim]
+        return self.net.compute_film(cond)
+
+    def _apply_fun(self, carry: SRMCarry, film_params=None) -> SRMCarry:
+        if self.use_film:
+            z0 = carry.x[..., :self.config.latent_dim]
+            feats = [carry.z, z0]
+            if not self.film_action_cond:
+                feats.append(carry.x[..., self.config.latent_dim + self.config.task_dim:])
+            feats.append(carry.context)
+            z = self.net(torch.cat(feats, dim=-1), film_params)
+        else:
+            z = self.net(torch.cat([carry.z, carry.x, carry.context], dim=-1))
         return SRMCarry(carry.x, z, carry.context)
 
     def _compute_context(self, z: torch.Tensor) -> torch.Tensor:
@@ -128,6 +157,10 @@ class SRM(nn.Module):
         compute_dis = self.use_dis_loss and z_star is not None
         dis_loss = carry.z.new_zeros(())
 
+        # FiLM gamma/beta depend only on carry.x (fixed for this forward pass):
+        # compute once here instead of inside every recursion-cycle _apply call.
+        film_params = self._film_params(carry.x) if self.use_film else None
+
         for h in range(self.H_cycles):
             # High recursion cycle: capture the carry before the context is refreshed so we
             # can log how far the high carry (z) moves and anchor the DIS intermediate target.
@@ -138,7 +171,7 @@ class SRM(nn.Module):
             with torch.no_grad():
                 for l in range(self.nograd_cycles):
                     z_inner_before = carry.z
-                    carry = self._apply_fun(carry)
+                    carry = self._apply_fun(carry, film_params)
                     # Part 1: Advantage Margin at every inner iteration, including no-grad
                     # ones (advantage_margin detaches internally so this stays side-effect free).
                     if log_margin:
@@ -149,7 +182,7 @@ class SRM(nn.Module):
             # Last T iterations with gradients (truncated BPTT)
             for l in range(self.grad_cycles):
                 z_inner_before = carry.z
-                carry = self._apply_fun(carry)
+                carry = self._apply_fun(carry, film_params)
                 if log_margin:
                     gl = self.nograd_cycles + l
                     m_mean, m_frac = advantage_margin(z_inner_before, carry.z, z_star)
@@ -198,7 +231,5 @@ class SRM(nn.Module):
     def __repr__(self):
         lines = [f"SRM(H_cycles={self.H_cycles}, L_cycles={self.L_cycles}, truncation={self.truncation_length}, film={self.use_film})"]
         lines.append(f"  (net): {self.net}")
-        if self.use_film:
-            lines.append(f"  (film): {self.film}")
         lines.append(f"  (context_net): {self.context_net}")
         return "\n".join(lines)
