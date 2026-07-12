@@ -5,7 +5,7 @@ import torch
 
 
 MODEL_SIZE = {
-	'S':   {'enc_dim': 128, # encoder ~67k parameters; 1.3M total
+	'S':   {'enc_dim': 128,
 		  	'mlp_dim': 256,
 		  	'latent_dim': 16,
 		  	'num_enc_layers': 2,
@@ -26,42 +26,38 @@ MODEL_SIZE = {
 }
 
 TRM_SIZE = {
-	'S':   {'hidden_size': 384, # 32+att=>~39k parameters; 128+att=>450k parameters 
+	'S':   {'hidden_size': 16,
 		  	'num_heads': 2,
 			'expansion': 4.0,
 			'H_cycles': 4,
 			'L_cycles': 3,
-			'L_layers': 2,
+			'latent_dim': 16,
+			'num_enc_layers': 2,
+			'num_state_obs_per_token': 16},
+	'M':   {'hidden_size': 128,
+		  	'num_heads': 2,
+			'expansion': 4.0,
+			'H_cycles': 4,
+			'L_cycles': 3,
+			'latent_dim': 128,
+			'num_enc_layers': 2,
+			'num_state_obs_per_token': 128},
+	'L':   {'hidden_size': 384,
+		  	'num_heads': 6,
+			'expansion': 4.0,
+			'H_cycles': 4,
+			'L_cycles': 3,
 			'latent_dim': 384,
-			'num_enc_layers': 2,
-			'num_state_obs_per_token': 16},
-	'M':   {'hidden_size': 512, # 256+att=>~1.6M parameters
-		  	'num_heads': 8,
-			'expansion': 4.0,
-			'H_cycles': 2,
-			'L_cycles': 8,
-			'L_layers': 2,
-			'latent_dim': 512,
-			'num_enc_layers': 2,
-			'num_state_obs_per_token': 16},
-	'L':   {'hidden_size': 512, # 512+att=>~6.5M parameters
-		  	'num_heads': 8,
-			'expansion': 4.0,
-			'H_cycles': 3,
-			'L_cycles': 6,
-			'L_layers': 3,
-			'latent_dim': 512,
 			'num_enc_layers': 3,
-			'num_state_obs_per_token': 16},
-	'XL':  {'hidden_size': 512, # 704+att=>~12.2M parameters
-			'num_heads': 16,
+			'num_state_obs_per_token': 384},
+	'XL':  {'hidden_size': 512,
+			'num_heads': 8,
 			'expansion': 8.0,
-			'H_cycles': 3,
-			'L_cycles': 10,
-			'L_layers': 4,
+			'H_cycles': 8,
+			'L_cycles': 4,
 			'latent_dim': 512,
 			'num_enc_layers': 4,
-			'num_state_obs_per_token': 16},
+			'num_state_obs_per_token': 512},
 }
 
 TASK_SET = {
