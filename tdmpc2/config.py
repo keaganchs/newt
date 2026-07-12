@@ -99,7 +99,8 @@ class Config:
 	sigreg_knots: int = 17									# number of quadrature knots for the SIGReg Epps-Pulley statistic
 	sigreg_num_proj: int = 1024								# number of random 1D projections per SIGReg evaluation
 	use_film_dynamics: bool = False							# whether to use FiLM conditioning for the task embedding in the dynamics model
-	xl_dynamics_mlp: bool = False							# for the default (non-TRM, non-FiLM) dynamics: use a larger [512, 512] hidden MLP instead of a single linear layer
+	film_action_conditioning: bool = True					# FiLM conditioning signal: True = FiLM conditions on [task_emb, action]; False = FiLM conditions on task_emb only and the action joins the trunk input instead. Applies to FiLMDynamics, SimpleTRM and SRM (only when use_film_dynamics=True)
+	xl_dynamics_mlp: bool = False							# for the default (non-TRM) dynamics: use a larger [512, 512] hidden MLP instead of a single linear layer (with use_film_dynamics, sizes the FiLMDynamics core the same way)
 	use_simple_trm_skip_connections: bool = False			# whether to add residual skip connections across z/y recursion cycles in SimpleTRM
 	simple_trm_skip_type: str = "swiglu"						# skip connection type for SimpleTRM: one of ["additive", "mlp", "swiglu"]
 	rrm_mask_x_for_y_update: bool = True					# zero-mask x (WM latent) during y carry updates; with FiLM only the WM latent is masked, task/action still condition via FiLM
@@ -136,7 +137,7 @@ class Config:
 
 	H_cycles: int = 1
 	L_cycles: int = 1
-	L_layers: int = 2
+	L_layers: int = 1										# depth of the recursive core: TRM stacks this many blocks; SimpleTRM/SRM use this many core layers (=1 is the historical single-projection). TRM scripts set L_layers=2 explicitly.
 	num_state_obs_per_token: int = 8						# Number of values in the state observation vector to place in each token. Affects the sequence length
 	pooling_strategy: str = "mean_obs_only"					# pooling strategy for transformer encoder output, one of ["mean", "cls", "mean_obs_only"]
 	use_trm_hidden_state_simnorm: bool = True				# whether to apply SimNorm to the hidden state before pooling
