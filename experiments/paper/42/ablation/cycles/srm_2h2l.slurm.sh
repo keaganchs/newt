@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=f3_off_1h1l
+#SBATCH --job-name=f3_off_2h2l
 #SBATCH --output=log/out_and_err_%j.txt
 #SBATCH --error=log/out_and_err_%j.txt
 #SBATCH --partition=main
@@ -9,11 +9,11 @@
 #SBATCH --time=71:59:00
 #SBATCH --gres=gpu:1
 
-# F3: gate off @1h1l (SimpleTRM, low-recursion).
+# F3: gate off @2h2l (SimpleTRM, low-recursion).
 #
 # 3090 cluster (SBATCH). Submit from the repo root:  sbatch <this file>
 # Low-recursion only (3-day wall limit); 1 cell x 3 seeds share one GPU.
-# group: abl_cycles_gate/smp_384ld_1h1l_off  (3 seeds aggregate; filter by "abl_cycles_gate/" prefix for the plan)
+# group: abl_cycles_srm/srm_384ld_2h2l  (3 seeds aggregate; filter by "abl_cycles_srm/" prefix for the plan)
 
 eval "$(~/miniconda3/bin/conda shell.bash hook)"
 conda activate newt
@@ -21,8 +21,8 @@ conda activate newt
 cd "$SLURM_SUBMIT_DIR"
 PYTHON_SCRIPT="$SLURM_SUBMIT_DIR/tdmpc2/train.py"
 SEEDS=(0 1 2)
-RUN="smp_384ld_1h1l_off"
-GROUP="abl_cycles_gate"
+RUN="srm_384ld_2h2l"
+GROUP="abl_cycles_srm"
 
 for SEED in "${SEEDS[@]}"; do
     python3 "$PYTHON_SCRIPT" \
@@ -32,11 +32,12 @@ for SEED in "${SEEDS[@]}"; do
         model_size=S \
         use_trm_encoder=False \
         use_task_embedding=True \
-        use_trm_dynamics=simple \
+        use_trm_dynamics=srm \
         latent_dim=384 \
         hidden_size=384 \
-        H_cycles=1 \
-        L_cycles=1 \
+        H_cycles=2 \
+        L_cycles=2 \
+        srm_truncation_length=2 \
         use_film_dynamics=False \
         wm_regularization_type=simnorm \
         use_dis_loss=False \
