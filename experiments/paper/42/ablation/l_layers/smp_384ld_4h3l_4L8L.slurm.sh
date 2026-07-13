@@ -5,7 +5,7 @@
 #SBATCH --partition=main
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=18
-#SBATCH --mem-per-cpu=10000
+#SBATCH --mem-per-cpu=5500
 #SBATCH --time=71:59:00
 #SBATCH --gres=gpu:1
 
