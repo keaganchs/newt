@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=f3_off_2h2l
+#SBATCH --job-name=f3_off_8h4l
 #SBATCH --output=log/out_and_err_%j.txt
 #SBATCH --error=log/out_and_err_%j.txt
 #SBATCH --partition=main

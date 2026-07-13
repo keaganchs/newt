@@ -23,6 +23,7 @@ for SEED in "${SEEDS[@]}"; do
         num_envs=21 \
         use_trm_encoder=False \
         use_trm_dynamics="simple" \
+        amp_dtype="bfloat16" \
         use_task_embedding=True \
         obs="state" \
         model_size="S" \
@@ -49,6 +50,7 @@ for SEED in "${SEEDS[@]}"; do
         num_envs=21 \
         use_trm_encoder=False \
         use_trm_dynamics="simple" \
+        amp_dtype="bfloat16" \
         use_task_embedding=True \
         obs="state" \
         model_size="S" \

@@ -15,7 +15,7 @@
 #
 # 3090 cluster (SBATCH). Submit from the repo root:  sbatch <this file>
 # Low-recursion only (3-day wall limit); 1 cell x 3 seeds share one GPU.
-# group: abl_l_layers/smp_16ld_1h1l_4L  (3 seeds aggregate; filter by "abl_l_layers/" prefix for the plan)
+# group: abl_l_layers/smp_16ld_4h3l_4L  (3 seeds aggregate; filter by "abl_l_layers/" prefix for the plan)
 
 eval "$(~/miniconda3/bin/conda shell.bash hook)"
 conda activate newt
@@ -23,7 +23,7 @@ conda activate newt
 cd "$SLURM_SUBMIT_DIR"
 PYTHON_SCRIPT="$SLURM_SUBMIT_DIR/tdmpc2/train.py"
 SEEDS=(0 1 2)
-RUN="smp_16ld_1h1l_4L"
+RUN="smp_16ld_4h3l_4L"
 GROUP="abl_l_layers"
 
 for SEED in "${SEEDS[@]}"; do
