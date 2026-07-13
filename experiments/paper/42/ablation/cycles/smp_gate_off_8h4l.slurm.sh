@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=f3_mlp_1h1l
+#SBATCH --job-name=f3_off_2h2l
 #SBATCH --output=log/out_and_err_%j.txt
 #SBATCH --error=log/out_and_err_%j.txt
 #SBATCH --partition=main
@@ -9,11 +9,11 @@
 #SBATCH --time=71:59:00
 #SBATCH --gres=gpu:1
 
-# F3: gate mlp @1h1l (SimpleTRM, low-recursion).
+# F3: gate off @2h2l (SimpleTRM, low-recursion).
 #
 # 3090 cluster (SBATCH). Submit from the repo root:  sbatch <this file>
 # Low-recursion only (3-day wall limit); 1 cell x 3 seeds share one GPU.
-# group: abl_cycles_gate/smp_384ld_1h1l_mlp  (3 seeds aggregate; filter by "abl_cycles_gate/" prefix for the plan)
+# group: abl_cycles_gate/smp_384ld_8h4l_off  (3 seeds aggregate; filter by "abl_cycles_gate/" prefix for the plan)
 
 eval "$(~/miniconda3/bin/conda shell.bash hook)"
 conda activate newt
@@ -21,7 +21,7 @@ conda activate newt
 cd "$SLURM_SUBMIT_DIR"
 PYTHON_SCRIPT="$SLURM_SUBMIT_DIR/tdmpc2/train.py"
 SEEDS=(0 1 2)
-RUN="smp_384ld_1h1l_mlp"
+RUN="smp_384ld_8h4l_off"
 GROUP="abl_cycles_gate"
 
 for SEED in "${SEEDS[@]}"; do
@@ -35,14 +35,13 @@ for SEED in "${SEEDS[@]}"; do
         use_trm_dynamics=simple \
         latent_dim=384 \
         hidden_size=384 \
-        H_cycles=1 \
-        L_cycles=1 \
+        H_cycles=8 \
+        L_cycles=4 \
         use_film_dynamics=False \
         wm_regularization_type=simnorm \
         use_dis_loss=False \
         xl_dynamics_mlp=False \
-        use_simple_trm_skip_connections=True \
-        simple_trm_skip_type=mlp \
+        use_simple_trm_skip_connections=False \
         rrm_mask_x_for_y_update=True \
         compile=True \
         log_trm_gradnorms=False \
