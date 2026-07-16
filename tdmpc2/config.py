@@ -104,6 +104,7 @@ class Config:
 	use_simple_trm_skip_connections: bool = False			# whether to add residual skip connections across z/y recursion cycles in SimpleTRM
 	simple_trm_skip_type: str = "swiglu"						# skip connection type for SimpleTRM: one of ["additive", "mlp", "swiglu"]
 	rrm_mask_x_for_y_update: bool = True					# zero-mask x (WM latent) during y carry updates; with FiLM only the WM latent is masked, task/action still condition via FiLM
+	rrm_random_y_init: bool = False							# initialize the high/refined carry (SimpleTRM y; SRM z) with trunc_normal(std=0.02) noise instead of copying the encoded WM latent
 
 	# Deep Improvement Supervision (DIS) — Asadulaev et al. "Deep Improvement Supervision"
 	use_dis_loss: bool = False								# add auxiliary per-H-cycle supervision of recursive dynamics (SimpleTRM/SRM) toward interpolated intermediate targets; off = exact existing behavior
