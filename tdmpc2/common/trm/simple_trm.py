@@ -50,6 +50,11 @@ class SimpleTRM(nn.Module):
             # (+ action). Depth follows L_layers via _core_hidden_dims, matching the
             # non-FiLM core.
             self.film_action_cond = config.film_action_conditioning
+            assert self.film_action_cond or config.task_dim > 0, (
+                "use_film_dynamics with use_task_embedding=False requires "
+                "film_action_conditioning=True: otherwise the FiLM conditioner "
+                "has no inputs and silently degrades to a learned bias."
+            )
             input_dim = 3 * config.latent_dim \
                 + (0 if self.film_action_cond else config.action_dim)
             cond_dim = config.task_dim \
@@ -85,8 +90,10 @@ class SimpleTRM(nn.Module):
 
     def initial_carry(self, x: torch.Tensor):
         batch_shape = x.shape[:-1]
-        # y = trunc_normal_init_(torch.empty(*batch_shape, self.config.hidden_size, device=x.device, dtype=x.dtype), std=0.02)
-        y = x[..., :self.latent_dim].detach().clone()  # warmup carry on part of the input latent state (ablation: no random init, just use the input latent state directly)
+        if self.config.rrm_random_y_init:
+            y = trunc_normal_init_(torch.empty(*batch_shape, self.latent_dim, device=x.device, dtype=x.dtype), std=0.02)
+        else:
+            y = x[..., :self.latent_dim].detach().clone()  # warmup carry on part of the input latent state
         z = trunc_normal_init_(torch.empty(*batch_shape, self.config.latent_dim, device=x.device, dtype=x.dtype), std=0.02)
         return SimpleTRMCarry(x, y, z)
 

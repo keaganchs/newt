@@ -71,6 +71,11 @@ class SRM(nn.Module):
             # active at every inner iteration, so trunk features are
             # [z, z0 (+ action), context].
             self.film_action_cond = config.film_action_conditioning
+            assert self.film_action_cond or config.task_dim > 0, (
+                "use_film_dynamics with use_task_embedding=False requires "
+                "film_action_conditioning=True: otherwise the FiLM conditioner "
+                "has no inputs and silently degrades to a learned bias."
+            )
             cond_dim = config.task_dim \
                 + (config.action_dim if self.film_action_cond else 0)
             trunk_in = 2 * config.latent_dim + config.hidden_size \
@@ -110,7 +115,13 @@ class SRM(nn.Module):
 
     def initial_carry(self, x: torch.Tensor) -> SRMCarry:
         batch_shape = x.shape[:-1]
-        z = x[..., :self.config.latent_dim].detach().clone()
+        if self.config.rrm_random_y_init:
+            # Ablation: start the recurrent carry from noise (like SimpleTRM's z)
+            # instead of the encoded WM latent; the input latent still reaches the
+            # core every iteration through x.
+            z = trunc_normal_init_(torch.empty(*batch_shape, self.config.latent_dim, device=x.device, dtype=x.dtype), std=0.02)
+        else:
+            z = x[..., :self.config.latent_dim].detach().clone()
         context = self.context_net(z)
         return SRMCarry(x, z, context)
 
