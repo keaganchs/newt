@@ -205,6 +205,11 @@ class FiLMDynamics(nn.Module):
 		self.latent_dim = cfg.latent_dim
 		self.task_dim = cfg.task_dim
 		self.action_cond = cfg.film_action_conditioning
+		assert self.action_cond or cfg.task_dim > 0, (
+			"use_film_dynamics with use_task_embedding=False requires "
+			"film_action_conditioning=True: otherwise the FiLM conditioner "
+			"has no inputs and silently degrades to a learned bias."
+		)
 		hidden_dims = [512, 512] if cfg.xl_dynamics_mlp else [cfg.mlp_dim]
 		in_dim = cfg.latent_dim + (0 if self.action_cond else cfg.action_dim)
 		cond_dim = cfg.task_dim + (cfg.action_dim if self.action_cond else 0)
