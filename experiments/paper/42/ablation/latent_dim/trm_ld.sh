@@ -8,9 +8,11 @@ source "$(dirname "$(realpath "$0")")/../_ablation_common.sh"
 
 # TRM stacks L_layers reasoning blocks; set L_layers=2 explicitly (the config
 # default is now 1, tuned for SimpleTRM/SRM). This preserves TRM's original depth.
-launch "trm_16ld_4h3l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=16 hidden_size=128 num_state_obs_per_token=128 amp_dtype="bfloat16"
-launch "trm_128ld_4h3l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=128 hidden_size=128 num_state_obs_per_token=128 amp_dtype="bfloat16"
-launch "trm_384ld_4h3l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=384 hidden_size=128 num_state_obs_per_token=128 amp_dtype="bfloat16"
-launch "trm_512ld_4h3l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=512 hidden_size=128 num_state_obs_per_token=128 amp_dtype="bfloat16"
+launch "trm_16ld_1h1l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=16 hidden_size=128 num_state_obs_per_token=128 L_cycles=1 H_cycles=1 amp_dtype="bfloat16"
+launch "trm_16ld_4h3l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=16 hidden_size=128 num_state_obs_per_token=128 L_cycles=4 H_cycles=3 amp_dtype="bfloat16"
+# launch "trm_128ld_4h3l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=128 hidden_size=128 num_state_obs_per_token=128 amp_dtype="bfloat16"
+launch "trm_384ld_1h1l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=384 hidden_size=128 num_state_obs_per_token=128 L_cycles=1 H_cycles=1 amp_dtype="bfloat16"
+launch "trm_384ld_4h3l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=384 hidden_size=128 num_state_obs_per_token=128 L_cycles=4 H_cycles=3 amp_dtype="bfloat16"
+# launch "trm_512ld_4h3l" "abl_latent_dim" use_trm_dynamics=trm L_layers=2 latent_dim=512 hidden_size=128 num_state_obs_per_token=128 amp_dtype="bfloat16"
 
 wait
