@@ -33,7 +33,7 @@ for SEED in "${SEEDS[@]}"; do
         H_cycles=1 \
         L_cycles=1 \
         use_film_dynamics=False \
-        wm_regularization_type=None \
+        wm_regularization_type="none" \
         use_dis_loss=False \
         xl_dynamics_mlp=True \
         use_simple_trm_skip_connections=False \
