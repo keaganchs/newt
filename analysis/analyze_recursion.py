@@ -105,9 +105,6 @@ plt.rcParams['mathtext.it'] = 'Roboto:italic'
 plt.rcParams['mathtext.bf'] = 'Roboto:bold'
 
 
-ARCH_NAME = {'simple': 'SimpleTRM', 'srm': 'SRM', 'trm': 'TRM'}
-
-
 def shade(color, frac, lo=0.2):
     """Blend `color` toward white by recursion progress: frac=0 (initial state) is
     lightest, frac=1 (final cycle) is the full color."""
@@ -417,16 +414,16 @@ def tsne_embed(seq, task_ids, seed):
 
 # ------------------------------------------------------------------ plotting
 
-def plot_seed_figure(seqs, task_ids, task_names, seed, arch, out_dir):
-    """2x4 figure: rows = (z carry, y carry); cols = (PCA trajectory, t-SNE, cossim, delta).
-    The t-SNE column is dropped when --tsne-points=0."""
+def plot_seed_figure(seqs, task_ids, task_names, seed, out_dir):
+    """4x2 figure: rows = (PCA trajectory, t-SNE, cossim, delta); cols = (z carry, y carry).
+    The t-SNE row is dropped when --tsne-points=0."""
     uniq = np.unique(task_ids)
     palette = sns.color_palette('rocket', len(uniq))
     use_tsne = ARGS.tsne_points > 0
-    ncols = 4 if use_tsne else 3
-    fig, axs = plt.subplots(2, ncols, figsize=(FIG_WIDTH_IN * ncols, FIG_HEIGHT_IN * 2))
+    nrows = 4 if use_tsne else 3
+    fig, axs = plt.subplots(nrows, 2, figsize=(FIG_WIDTH_IN * 2, FIG_HEIGHT_IN * nrows))
 
-    for row, key in enumerate(['z', 'y']):
+    for col, key in enumerate(['z', 'y']):
         seq = seqs[key]                              # [N, T, D]
         N, T, D = seq.shape
         mu, comps, evr = pca_fit(seq.reshape(-1, D))
@@ -434,7 +431,7 @@ def plot_seed_figure(seqs, task_ids, task_names, seed, arch, out_dir):
         proj = proj.reshape(N, T, 2)
         cos, dlt = step_metrics(seq)
 
-        ax = axs[row, 0]
+        ax = axs[0, col]
         fr = lambda i: i / max(T - 1, 1)             # recursion progress in [0, 1]
         for c, t in zip(palette, uniq):
             m = proj[task_ids == t].mean(0)          # [T, 2] per-task mean trajectory
@@ -449,7 +446,7 @@ def plot_seed_figure(seqs, task_ids, task_names, seed, arch, out_dir):
         if use_tsne:
             print(f'  t-SNE ({key} carry, up to {ARGS.tsne_points} states) ...')
             emb, e_task, e_cycle = tsne_embed(seq, task_ids, ARGS.seed)
-            ax = axs[row, 1]
+            ax = axs[1, col]
             for c, t in zip(palette, uniq):
                 sel = e_task == t
                 ax.scatter(emb[sel, 0], emb[sel, 1],
@@ -469,9 +466,9 @@ def plot_seed_figure(seqs, task_ids, task_names, seed, arch, out_dir):
             ax.set_ylabel('t-SNE 2', fontsize=FONT_PT)
             ax.set_title(f't-SNE: {key} carry', fontsize=FONT_PT)
 
-        for col, (vals, ylab, name) in enumerate(
+        for row, (vals, ylab, name) in enumerate(
                 [(cos, r'$\cos(s_i, s_{i-1})$', 'Cosine Similarity'),
-                 (dlt, r'$\|s_i - s_{i-1}\|$', 'State Difference')], start=ncols - 2):
+                 (dlt, r'$\|s_i - s_{i-1}\|$', 'State Difference')], start=nrows - 2):
             ax = axs[row, col]
             steps = np.arange(1, T)
             for c, t in zip(palette, uniq):
@@ -495,23 +492,22 @@ def plot_seed_figure(seqs, task_ids, task_names, seed, arch, out_dir):
         ax.tick_params(labelsize=FONT_PT - 1)
         sns.despine(ax=ax)
     task_handles = [Line2D([], [], color=c, marker='o', ms=3, lw=1.2) for c in palette]
-    task_leg = fig.legend(task_handles, [task_names[t] for t in uniq], loc='upper left',
-                          bbox_to_anchor=(1.0, 0.82), fontsize=FONT_PT - 3, frameon=False,
+    task_leg = fig.legend(task_handles, [task_names[t] for t in uniq], loc='center left',
+                          bbox_to_anchor=(1.0, 0.5), fontsize=FONT_PT - 3, frameon=False,
                           title='task', title_fontsize=FONT_PT - 2)
-    fig.suptitle(f'{ARCH_NAME.get(arch, arch)} Latent Analysis '
-                 f'(latent_dim={seqs["ld"]}, H={seqs["H"]}, L={seqs["L"]}, seed={seed})',
-                 fontsize=FONT_PT + 1)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.tight_layout()
     # Continuous recursion-progress colorbar (light -> dark), above the task legend.
     # Added after tight_layout so the layout pass never moves it.
     cmap = matplotlib.colors.LinearSegmentedColormap.from_list(
         'cycle_shade', [shade('#3b3b3b', 0.0), shade('#3b3b3b', 1.0)])
-    # Center the colorbar horizontally on the task legend below it.
+    # Center the colorbar horizontally on the task legend and sit it just above
+    # the legend's top edge (the legend itself is vertically centered on the figure).
     fig.canvas.draw()
     leg_bb = task_leg.get_window_extent(fig.canvas.get_renderer()) \
                      .transformed(fig.transFigure.inverted())
-    cbar_w = 0.06
-    cax = fig.add_axes([leg_bb.x0 + (leg_bb.width - cbar_w) / 2, 0.91, cbar_w, 0.012])
+    cbar_w = 0.11
+    cax = fig.add_axes([leg_bb.x0 + (leg_bb.width - cbar_w) / 2,
+                        leg_bb.y1 + 0.02, cbar_w, 0.006])
     cbar = fig.colorbar(matplotlib.cm.ScalarMappable(cmap=cmap), cax=cax,
                         orientation='horizontal')
     cbar.set_ticks([0, 1])
@@ -523,7 +519,7 @@ def plot_seed_figure(seqs, task_ids, task_names, seed, arch, out_dir):
     plt.close(fig)
 
 
-def plot_seed_summary(per_seed, meta, out_dir):
+def plot_seed_summary(per_seed, out_dir):
     """2x2 cross-seed figure: rows = (z, y) carry, cols = (cossim, delta); one line per seed."""
     fig, axs = plt.subplots(2, 2, figsize=(FIG_WIDTH_IN * 2, FIG_HEIGHT_IN * 2))
     palette = sns.color_palette('rocket', len(per_seed))
@@ -545,10 +541,7 @@ def plot_seed_summary(per_seed, meta, out_dir):
             ax.tick_params(labelsize=FONT_PT - 1)
             sns.despine(ax=ax)
     axs[0, 0].legend(fontsize=FONT_PT - 2, frameon=False)
-    fig.suptitle(f'{ARCH_NAME.get(meta["arch"], meta["arch"])} Latent Analysis '
-                 f'(latent_dim={meta["ld"]}, H={meta["H"]}, L={meta["L"]})',
-                 fontsize=FONT_PT + 1)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.tight_layout()
     fig.savefig(out_dir / 'recursion_metrics_seeds.svg', bbox_inches='tight')
     plt.close(fig)
 
@@ -602,11 +595,8 @@ def main():
         print(f'  recorded recursion for {len(task_ids)} transitions: '
               f'z {z_seq.shape}, y {y_seq.shape}')
 
-        seqs = {'z': z_seq, 'y': y_seq, 'H': cfg.H_cycles, 'L': cfg.L_cycles,
-                'ld': cfg.latent_dim}
-        plot_seed_figure(seqs, task_ids, task_names, seed, cfg.use_trm_dynamics, out_dir)
-        meta = {'arch': cfg.use_trm_dynamics, 'ld': cfg.latent_dim,
-                'H': cfg.H_cycles, 'L': cfg.L_cycles}
+        seqs = {'z': z_seq, 'y': y_seq}
+        plot_seed_figure(seqs, task_ids, task_names, seed, out_dir)
 
         per_seed_summary[seed] = {}
         for key, seq in (('z', z_seq), ('y', y_seq)):
@@ -623,7 +613,7 @@ def main():
         torch.cuda.empty_cache()
 
     assert per_seed_summary, 'No runs produced results.'
-    plot_seed_summary(per_seed_summary, meta, out_dir)
+    plot_seed_summary(per_seed_summary, out_dir)
 
     import csv
     with open(out_dir / 'recursion_metrics.csv', 'w', newline='') as f:
