@@ -25,7 +25,7 @@ If you use this work, please cite the thesis:
     title  = {Tiny Recursive World Models},
     author = {Keagan Holmes},
     year   = {2026},
-    school = {<add your institution>},
+    school = {Technical University of Darmstadt},
     type   = {Master's thesis},
 }
 ```
