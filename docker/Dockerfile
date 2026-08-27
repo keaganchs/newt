@@ -37,8 +37,9 @@ RUN echo "cd /root" >> /root/.bashrc
 # pip packages
 RUN pip install --no-cache-dir 'ale_py==0.10'
 
-# download physx GPU binary via sapien
-RUN python -c "exec('import sapien.physx as physx;\ntry:\n  physx.enable_gpu()\nexcept:\n  pass;')"
+# download physx GPU binary via sapien (best-effort: ManiSkill/sapien are optional
+# in the default environment.yaml, so a missing import must not fail the build)
+RUN python -c "exec('try:\n  import sapien.physx as physx\n  physx.enable_gpu()\nexcept Exception:\n  pass')"
 
 # copy maniskill assets to avoid repeatedly downloading
 COPY .maniskill /root/.maniskill
