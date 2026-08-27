@@ -5,14 +5,14 @@ channels:
 dependencies:
   - glew=2.1.0
   - glib=2.86.0
+  - swig=4.*                # provides the swig binary before pip builds box2d-py; must be a conda dep so it is on PATH during the pip stage
   - pip=25.2
   - python=3.10
   - pip:
     - dm-control==1.0.34
     - glfw==2.10.0
-    # - gymnasium[atari,accept-rom-license,box2d]==0.29.1
-    - gymnasium[accept-rom-license]==0.29.1
-    - swig==4.4.1
+    # atari extra is disabled (see README note); box2d is enabled and builds via the conda `swig` above
+    - gymnasium[accept-rom-license,box2d]==0.29.1
     - gpustat==1.1.1
     - ffmpeg==1.4
     - imageio==2.37.0
@@ -59,3 +59,8 @@ dependencies:
     - lxml==6.0.2
     # - mani-skill==3.0.0b22
     - opencv-python-headless==4.12.0.88  # headless build: no libGL.so.1 dependency (needed on GPU clusters without graphics caps)
+    # plotting / analysis stack (analysis/*.py: PCA/t-SNE latent studies, benchmarks, figures)
+    - matplotlib==3.10.9
+    - seaborn==0.13.2
+    - scikit-learn==1.7.2
+    - pandas==2.3.3
